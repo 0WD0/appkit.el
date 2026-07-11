@@ -83,6 +83,23 @@
       (should (string-match-p "c:C:plain\na:A:plain\nd:D:plain"
                               (buffer-string))))))
 
+(ert-deftest appkit-chat-timeline-refresh-reprints-unchanged-rows ()
+  (appkit-test-with-view
+    (let ((prints (make-hash-table :test #'equal)))
+      (appkit-chat-timeline-ensure
+       :printer (appkit-chat-timeline-test--printer prints)
+       :anchor-property 'test-message-key)
+      (appkit-chat-timeline-sync
+       (list (appkit-chat-timeline-test--row 'a "A")
+             (appkit-chat-timeline-test--row 'b "B")))
+      (let ((a-node (appkit-chat-timeline-node 'a))
+            (b-node (appkit-chat-timeline-node 'b)))
+        (appkit-chat-timeline-refresh)
+        (should (eq a-node (appkit-chat-timeline-node 'a)))
+        (should (eq b-node (appkit-chat-timeline-node 'b)))
+        (should (= 2 (gethash 'a prints)))
+        (should (= 2 (gethash 'b prints)))))))
+
 (ert-deftest appkit-chat-timeline-invalidates-old-and-new-resource-dependents ()
   (appkit-test-with-view
     (let ((prints (make-hash-table :test #'equal))

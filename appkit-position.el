@@ -106,6 +106,23 @@ ANCHOR-VALUE-MAP maps explicit old keys to promoted keys."
         (forward-line (max 0 (1- line)))
         (set-window-start window (point) 'noforce)))))
 
+(cl-defun appkit-position-render-preserving
+    (render-function &key anchor-property preserve-window-start after-restore)
+  "Call RENDER-FUNCTION and restore semantic point and viewport context.
+
+ANCHOR-PROPERTY and PRESERVE-WINDOW-START are passed to
+`appkit-position-capture'.  Call AFTER-RESTORE after restoration when it is a
+function."
+  (let ((snapshot
+         (appkit-position-capture
+          :anchor-property anchor-property
+          :preserve-window-start preserve-window-start)))
+    (funcall render-function)
+    (when snapshot
+      (appkit-position-restore snapshot))
+    (when (functionp after-restore)
+      (funcall after-restore))))
+
 (provide 'appkit-position)
 
 ;;; appkit-position.el ends here
