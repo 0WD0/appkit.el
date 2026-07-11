@@ -8,10 +8,18 @@ and `emacs-qq`:
 - coalesced invalidation followed by one view-owned synchronization callback
 - stable-key EWOC reconciliation and semantic position restoration
 - a persistent chat composer and projected chat timeline
+- reusable prefix, one-line/list-view, mode-line, and two-line avatar geometry
+- browser-free media resources, inline image/video previews, and media actions
 
-Application state and rendering stay in the client packages.  Appkit owns the
-lifecycle and update mechanics; it does not define Discord, QQ, channel, or
-message models.
+Application state, protocol adaptation, and client branding stay in the
+client packages.  Appkit owns lifecycle/update mechanics and reusable
+presentation geometry; it does not define Discord, QQ, channel, or message
+models.
+
+Media callers adapt backend objects into canonical resource descriptors and
+explicit preview metadata.  Appkit owns atomic acquisition, byte-level image
+cache finalization, and preview processes.  Clients own logical cache keys,
+wire-resource state, and branded faces.
 
 ## Development
 
@@ -29,8 +37,9 @@ developed together:
 (depends-on "appkit" :file "../appkit.el")
 ```
 
-No consumer compatibility aliases are provided.  Shared chat code uses the
-`appkit-chatbuf-*` and `appkit-chat-timeline-*` namespaces directly.
+No consumer compatibility aliases are provided.  Shared code uses the
+`appkit-chatbuf-*`, `appkit-chat-timeline-*`, `appkit-ui-*`, `appkit-view-*`,
+`appkit-chat-ins-*`, and `appkit-media-*` namespaces directly.
 
 ## Update model
 
