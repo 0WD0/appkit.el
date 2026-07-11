@@ -1,0 +1,176 @@
+;;; appkit-chat-timeline-test.el --- Tests for projected chat timelines -*- lexical-binding: t; -*-
+
+(require 'ert)
+(require 'cl-lib)
+
+(require 'appkit-chat-timeline)
+(require 'appkit-test-helper)
+
+(defun appkit-chat-timeline-test--printer (prints)
+  "Return a row printer recording render counts in PRINTS."
+  (lambda (row)
+    (let* ((key (appkit-chat-timeline-row-key row))
+           (payload (appkit-chat-timeline-row-payload row))
+           (context (appkit-chat-timeline-row-context row))
+           (start (point)))
+      (puthash key (1+ (gethash key prints 0)) prints)
+      (insert (format "%s:%s:%s\n"
+                      key payload (or (plist-get context :layout) "plain")))
+      (add-text-properties start (point) (list 'test-message-key key)))))
+
+(defun appkit-chat-timeline-test--row (key payload &optional context dependencies)
+  "Create one test row from KEY, PAYLOAD, CONTEXT, and DEPENDENCIES."
+  (appkit-chat-timeline-row-create
+   :key key
+   :payload payload
+   :context context
+   :dependencies dependencies))
+
+(ert-deftest appkit-chat-timeline-projects-context-and-dependencies ()
+  (let ((rows
+         (appkit-chat-timeline-project
+          '((a . "one") (b . "two"))
+          #'car
+          :context-function
+          (lambda (previous current)
+            (list :previous (car-safe previous)
+                  :current (car current)))
+          :dependencies-function
+          (lambda (entry)
+            (list (list :source (cdr entry)))))))
+    (should (equal '(a b) (mapcar #'appkit-chat-timeline-row-key rows)))
+    (should (equal '(:previous a :current b)
+                   (appkit-chat-timeline-row-context (cadr rows))))
+    (should (equal '((:source "two"))
+                   (appkit-chat-timeline-row-dependencies (cadr rows))))))
+
+(ert-deftest appkit-chat-timeline-sync-is-keyed-and-context-sensitive ()
+  (appkit-test-with-view
+    (let ((prints (make-hash-table :test #'equal)))
+      (appkit-chat-timeline-ensure
+       :printer (appkit-chat-timeline-test--printer prints)
+       :anchor-property 'test-message-key)
+      (appkit-chat-timeline-sync
+       (list (appkit-chat-timeline-test--row 'a "A")
+             (appkit-chat-timeline-test--row 'b "B")))
+      (let ((a-node (appkit-chat-timeline-node 'a))
+            (b-node (appkit-chat-timeline-node 'b)))
+        (appkit-chat-timeline-sync
+         (list (appkit-chat-timeline-test--row 'a "A")
+               (appkit-chat-timeline-test--row 'b "B" '(:layout compact))))
+        (should (eq a-node (appkit-chat-timeline-node 'a)))
+        (should (eq b-node (appkit-chat-timeline-node 'b)))
+        (should (= 1 (gethash 'a prints)))
+        (should (= 2 (gethash 'b prints)))
+        (should (equal '(a b) (appkit-chat-timeline-keys)))))))
+
+(ert-deftest appkit-chat-timeline-sync-handles-arbitrary-reordering ()
+  (appkit-test-with-view
+    (let ((prints (make-hash-table :test #'equal)))
+      (appkit-chat-timeline-ensure
+       :printer (appkit-chat-timeline-test--printer prints)
+       :anchor-property 'test-message-key)
+      (appkit-chat-timeline-sync
+       (list (appkit-chat-timeline-test--row 'a "A")
+             (appkit-chat-timeline-test--row 'b "B")
+             (appkit-chat-timeline-test--row 'c "C")))
+      (appkit-chat-timeline-sync
+       (list (appkit-chat-timeline-test--row 'c "C")
+             (appkit-chat-timeline-test--row 'a "A")
+             (appkit-chat-timeline-test--row 'd "D")))
+      (should (equal '(c a d) (appkit-chat-timeline-keys)))
+      (should-not (appkit-chat-timeline-node 'b))
+      (should (string-match-p "c:C:plain\na:A:plain\nd:D:plain"
+                              (buffer-string))))))
+
+(ert-deftest appkit-chat-timeline-invalidates-old-and-new-resource-dependents ()
+  (appkit-test-with-view
+    (let ((prints (make-hash-table :test #'equal))
+          (resource '(:message "source")))
+      (appkit-chat-timeline-ensure
+       :printer (appkit-chat-timeline-test--printer prints)
+       :anchor-property 'test-message-key)
+      (appkit-chat-timeline-sync
+       (list (appkit-chat-timeline-test--row 'source "source")
+             (appkit-chat-timeline-test--row 'reply "reply" nil
+                                             (list resource))))
+      (appkit-chat-timeline-sync
+       (list (appkit-chat-timeline-test--row 'source "updated")
+             (appkit-chat-timeline-test--row 'reply "reply" nil
+                                             (list resource)))
+       :changed-resources (list resource))
+      (should (= 2 (gethash 'source prints)))
+      (should (= 2 (gethash 'reply prints)))
+      (should (equal '(reply)
+                     (appkit-chat-timeline-dependent-keys (list resource)))))))
+
+(ert-deftest appkit-chat-timeline-rekey-preserves-node-and-semantic-point ()
+  (appkit-test-with-view
+    (let ((prints (make-hash-table :test #'equal)))
+      (appkit-chat-timeline-ensure
+       :printer (appkit-chat-timeline-test--printer prints)
+       :anchor-property 'test-message-key)
+      (appkit-chat-timeline-sync
+       (list (appkit-chat-timeline-test--row "local-1" "pending")))
+      (let ((node (appkit-chat-timeline-node "local-1")))
+        (goto-char (appkit-chat-timeline-key-position "local-1"))
+        (move-to-column 3)
+        (appkit-chat-timeline-sync
+         (list (appkit-chat-timeline-test--row
+                "7467703692092974645" "sent"))
+         :rekeys '(("local-1" . "7467703692092974645")))
+        (should (eq node
+                    (appkit-chat-timeline-node "7467703692092974645")))
+        (should-not (appkit-chat-timeline-node "local-1"))
+        (should (equal "7467703692092974645"
+                       (appkit-chat-timeline-key-at-point)))
+        (should (= 3 (current-column)))))))
+
+(ert-deftest appkit-chat-timeline-frame-update-preserves-composer-and-undo ()
+  (appkit-test-with-view
+    (let ((prints (make-hash-table :test #'equal)))
+      (appkit-chatbuf-init-state 8)
+      (appkit-chat-timeline-ensure
+       :printer (appkit-chat-timeline-test--printer prints)
+       :anchor-property 'test-message-key
+       :header "old header\n"
+       :footer "old footer\n")
+      (appkit-chat-timeline-sync
+       (list (appkit-chat-timeline-test--row 'a "A")))
+      (appkit-chat-timeline-set-frame
+       "old header\n" "old footer\n"
+       :bind-input-function
+       (lambda ()
+         (appkit-chatbuf-bind-input-region
+          :visible-p t :prompt ">>> " :input-text "draft")))
+      (goto-char (+ (appkit-chatbuf-input-start-position) 2))
+      (setq buffer-undo-list nil)
+      (let ((input-marker appkit-chatbuf--input-marker)
+            (prompt-marker appkit-chatbuf--prompt-marker))
+        (appkit-chat-timeline-set-frame
+         "new header\n" "new footer\n"
+         :bind-input-function
+         (lambda ()
+           (appkit-chatbuf-bind-input-region
+            :visible-p t :prompt "qq> " :input-text "draft")))
+        (should (eq input-marker appkit-chatbuf--input-marker))
+        (should (eq prompt-marker appkit-chatbuf--prompt-marker))
+        (should (= 2 (- (point) (appkit-chatbuf-input-start-position))))
+        (should (equal "draft" (appkit-chatbuf-input-string)))
+        (should-not buffer-undo-list)))))
+
+(ert-deftest appkit-chat-timeline-rejects-invalid-projections-before-mutation ()
+  (appkit-test-with-view
+    (let ((prints (make-hash-table :test #'equal)))
+      (appkit-chat-timeline-ensure
+       :printer (appkit-chat-timeline-test--printer prints)
+       :anchor-property 'test-message-key)
+      (should-error
+       (appkit-chat-timeline-sync
+        (list (appkit-chat-timeline-test--row 'same "one")
+              (appkit-chat-timeline-test--row 'same "two"))))
+      (should-not (appkit-chat-timeline-keys)))))
+
+(provide 'appkit-chat-timeline-test)
+
+;;; appkit-chat-timeline-test.el ends here
