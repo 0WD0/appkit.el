@@ -13,5 +13,6 @@
 (source 'melpa)
 
 (depends-on "emacs" "27.1")
+(depends-on "plz" "0.8")
 
 (script "test" "eask test ert test/*.el")
