@@ -1,11 +1,4 @@
-;;; appkit-ewoc.el --- Stable-key EWOC projection helpers  -*- lexical-binding: t; -*-
-
-;; Copyright (C) 2026 0WD0
-
-;; Author: 0WD0 <me@0wd0.com>
-;; Maintainer: 0WD0 <me@0wd0.com>
-;; Keywords: lisp, extensions
-;; URL: https://github.com/emacs-im/appkit.el
+;;; appkit-ewoc.el --- Stable-key EWOC projection helpers -*- lexical-binding: t; -*-
 
 ;;; Commentary:
 
@@ -35,8 +28,7 @@
     nodes))
 
 (defun appkit-ewoc--validate-entries (entries key-function)
-  "Require one unique stable key for every item in ENTRIES.
-KEY-FUNCTION extracts that opaque key from an entry."
+  "Require one unique stable key for every item in ENTRIES."
   (let ((seen (make-hash-table :test #'equal)))
     (dolist (entry entries)
       (let ((key (funcall key-function entry)))
@@ -46,9 +38,7 @@ KEY-FUNCTION extracts that opaque key from an entry."
         (puthash key t seen)))))
 
 (cl-defun appkit-ewoc-reconcile (ewoc entries key-function &key force-keys)
-  "Reconcile keyed EWOC with ENTRIES and return its new node table.
-KEY-FUNCTION extracts stable keys, and FORCE-KEYS names retained rows whose
-printers must run again."
+  "Reconcile keyed EWOC with ENTRIES and return its new node table."
   (appkit-ewoc--validate-entries entries key-function)
   (let* ((available (appkit-ewoc--nodes ewoc key-function))
          (target-keys (appkit-ewoc--key-set (mapcar key-function entries)))

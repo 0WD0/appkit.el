@@ -1,11 +1,4 @@
-;;; appkit-invalidation.el --- View-owned invalidation scheduling  -*- lexical-binding: t; -*-
-
-;; Copyright (C) 2026 0WD0
-
-;; Author: 0WD0 <me@0wd0.com>
-;; Maintainer: 0WD0 <me@0wd0.com>
-;; Keywords: lisp, extensions
-;; URL: https://github.com/emacs-im/appkit.el
+;;; appkit-invalidation.el --- View-owned invalidation scheduling -*- lexical-binding: t; -*-
 
 ;;; Commentary:
 
@@ -47,28 +40,6 @@
            (appkit-invalidations-resource-keys invalidations)
            (appkit-invalidations-position-p invalidations))))
 
-(defun appkit-invalidations-affect-p (invalidations parts)
-  "Return non-nil when INVALIDATIONS affect content in domain PARTS.
-
-Structure, entry, resource, and geometry invalidations affect every content
-surface.  Other named parts affect only a surface that includes them in PARTS.
-Position is a restoration intent and does not by itself affect content."
-  (unless (appkit-invalidations-p invalidations)
-    (signal 'wrong-type-argument
-            (list 'appkit-invalidations-p invalidations)))
-  (unless (listp parts)
-    (signal 'wrong-type-argument (list 'listp parts)))
-  (let ((pending-parts (appkit-invalidations-parts invalidations))
-        affected-p)
-    (while (and pending-parts (not affected-p))
-      (setq affected-p (memq (pop pending-parts) parts)))
-    (and (or (appkit-invalidations-structure-p invalidations)
-             (appkit-invalidations-entry-keys invalidations)
-             (appkit-invalidations-resource-keys invalidations)
-             (memq 'geometry (appkit-invalidations-parts invalidations))
-             affected-p)
-         t)))
-
 (defun appkit--invalidation-values (singular plural)
   "Normalize SINGULAR and PLURAL invalidation values into a list."
   (delete-dups
@@ -80,10 +51,7 @@ Position is a restoration intent and does not by itself affect content."
 
 (cl-defun appkit-invalidate
     (view &key structure part parts entry entries resource resources position)
-  "Mark stale projections in VIEW without mutating its buffer.
-STRUCTURE marks the whole projection.  PART and PARTS name declared view
-regions; ENTRY and ENTRIES name stable domain entries; RESOURCE and RESOURCES
-name shared dependencies.  POSITION requests semantic position preservation."
+  "Mark stale projections in VIEW without mutating its buffer."
   (unless (appkit-view-live-p view)
     (cl-return-from appkit-invalidate nil))
   (let* ((state (appkit-view-invalidations-ensure view))
@@ -160,32 +128,8 @@ name shared dependencies.  POSITION requests semantic position preservation."
       (appkit-handle-object
        (appkit-invalidations-scheduled-handle state)))))
 
-(cl-defun appkit-request-sync
-    (view &key structure part parts entry entries resource resources position
-          (delay 0))
-  "Invalidate stale projections and schedule one coalesced sync for VIEW.
-
-STRUCTURE, PART, PARTS, ENTRY, ENTRIES, RESOURCE, RESOURCES, and POSITION have
-the same meaning as in `appkit-invalidate'.  DELAY is forwarded to
-`appkit-schedule-sync'.  Pending View events also count as synchronization
-work.  Return the owned timer object, or nil when VIEW is no longer live."
-  (when-let* ((state
-               (appkit-invalidate
-                view
-                :structure structure
-                :part part
-                :parts parts
-                :entry entry
-                :entries entries
-                :resource resource
-                :resources resources
-                :position position)))
-    (when (or (appkit-invalidations-any-p state)
-              (appkit-view-pending-events view))
-      (appkit-schedule-sync view :delay delay))))
-
 (defun appkit-sync-invalidations (view)
-  "Synchronize VIEW from one invalidation and event snapshot."
+  "Synchronize VIEW from one coalesced invalidation snapshot."
   (when (appkit-view-live-p view)
     (let* ((state (appkit-view-invalidations-ensure view))
            (handle (appkit-invalidations-scheduled-handle state)))
@@ -193,28 +137,23 @@ work.  Return the owned timer object, or nil when VIEW is no longer live."
       (when (appkit-handle-p handle) (appkit-cancel-handle handle))
       (if (appkit-invalidations-syncing-p state)
           (appkit-schedule-sync view)
-        (when (or (appkit-invalidations-any-p state)
-                  (appkit-view-pending-events view))
+        (when (appkit-invalidations-any-p state)
           (let ((sync (appkit-view-sync-function view)))
             (unless (functionp sync)
               (error "Appkit view %S has no invalidation sync function"
                      (appkit-view-id view)))
-            (let* ((snapshot (appkit-invalidations-take state))
-                   (events (appkit-view-pending-events-snapshot view))
-                   (event-count (length events))
-                   completed-p)
+            (let ((snapshot (appkit-invalidations-take state))
+                  completed-p)
               (setf (appkit-invalidations-syncing-p state) t)
               (unwind-protect
                   (appkit-with-live-view view
-                    (funcall sync view snapshot events)
-                    (appkit-view-acknowledge-events view event-count)
+                    (funcall sync view snapshot)
                     (setq completed-p t))
                 (unless completed-p
                   (appkit-invalidations-merge state snapshot))
                 (setf (appkit-invalidations-syncing-p state) nil)
                 (when (and completed-p
-                           (or (appkit-invalidations-any-p state)
-                               (appkit-view-pending-events view)))
+                           (appkit-invalidations-any-p state))
                   (appkit-schedule-sync view))))))))))
 
 (provide 'appkit-invalidation)
