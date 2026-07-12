@@ -8,7 +8,7 @@ and `emacs-qq`:
 - coalesced invalidation followed by one view-owned synchronization callback
 - stable-key EWOC reconciliation and semantic position restoration
 - a persistent chat composer, shared rich completion substrate, and projected
-  chat timeline
+  Unicode emoji completion, and projected chat timeline
 - reusable prefix, one-line/list-view, mode-line, and two-line avatar geometry
 - browser-free media resources, inline image/video previews, and media actions
 
@@ -45,10 +45,14 @@ namespaces directly.
 
 Chat completion is deliberately provider-neutral: appkit owns token bounds,
 candidate metadata, CAPF/picker presentation, atomic commit, and ordered TAB
-dispatch.  Clients own member/emoji lookup, avatar acquisition, protocol
-objects, and insertion callbacks.  A selected mention or sticker therefore
-remains a real client-defined structured composer object rather than appkit
-inventing a wire format.
+dispatch.  Clients own member and server-emoji lookup, avatar acquisition,
+protocol objects, and insertion callbacks.  A selected mention or sticker
+therefore remains a real client-defined structured composer object rather
+than appkit inventing a wire format.
+
+On Emacs versions that provide the built-in emoji database,
+`appkit-chat-emoji-*` adds shared `:unicode_name:` candidates.  Server emoji,
+stickers, and favorite-face lookup remain client-owned providers.
 
 ## Update model
 

@@ -96,12 +96,55 @@ appkit composer input.  A closing delimiter such as the final colon in
                 :raw (buffer-substring-no-properties found end)
                 :query (buffer-substring-no-properties (1+ found) end)))))))
 
+(defun appkit-chat-completion-delimited-token-bounds (delimiter)
+  "Return metadata for a delimited token before point.
+
+DELIMITER is the character wrapping the token.  Both an open token such as
+`:rock' and a closed token such as `:rocket:' are accepted.  The token must
+stay inside the active composer, contain no whitespace or structured input
+object, and start at a normal token boundary."
+  (unless (characterp delimiter)
+    (error "Chat completion delimiter must be a character"))
+  (or
+   (when (and (appkit-chatbuf-point-in-input-p)
+              (eq (char-before) delimiter))
+     (let* ((input-start (appkit-chatbuf-input-start-position))
+            (end (point))
+            (position (- end 2))
+            start)
+       (while (and (not start) (>= position input-start))
+         (cond
+          ((get-text-property position
+                              appkit-chatbuf-input-object-property)
+           (setq position (1- input-start)))
+          ((eq (char-after position) delimiter)
+           (setq start position))
+          ((eq (char-syntax (char-after position)) ?\ )
+           (setq position (1- input-start)))
+          (t
+           (setq position (1- position)))))
+       (when (and start
+                  (< (1+ start) (1- end))
+                  (appkit-chat-completion--left-boundary-p start input-start))
+         (list :start start
+               :end end
+               :trigger delimiter
+               :raw (buffer-substring-no-properties start end)
+               :query (buffer-substring-no-properties
+                       (1+ start) (1- end))))))
+   (let ((input-start (appkit-chatbuf-input-start-position)))
+     (unless (and input-start
+                  (eq (char-before) delimiter)
+                  (> (point) (1+ input-start))
+                  (eq (char-before (1- (point))) delimiter))
+       (appkit-chat-completion-token-bounds delimiter)))))
+
 (defun appkit-chat-completion--candidate-label (candidate)
   "Return and validate CANDIDATE's plain LABEL."
   (let ((label (and (appkit-chat-completion-candidate-p candidate)
                     (appkit-chat-completion-candidate-label candidate))))
     (unless (and (stringp label) (not (string-empty-p label)))
-      (error "appkit chat completion candidate needs a non-empty label"))
+      (error "Appkit chat completion candidate needs a non-empty label"))
     (substring-no-properties label)))
 
 (defun appkit-chat-completion--candidate-map (candidates)
