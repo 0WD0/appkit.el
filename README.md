@@ -7,7 +7,8 @@ and `emacs-qq`:
 - explicit generated-content, property-only, and editable transactions
 - coalesced invalidation followed by one view-owned synchronization callback
 - stable-key EWOC reconciliation and semantic position restoration
-- a persistent chat composer and projected chat timeline
+- a persistent chat composer, shared rich completion substrate, and projected
+  chat timeline
 - reusable prefix, one-line/list-view, mode-line, and two-line avatar geometry
 - browser-free media resources, inline image/video previews, and media actions
 
@@ -39,7 +40,15 @@ developed together:
 
 No consumer compatibility aliases are provided.  Shared code uses the
 `appkit-chatbuf-*`, `appkit-chat-timeline-*`, `appkit-ui-*`, `appkit-view-*`,
-`appkit-chat-ins-*`, and `appkit-media-*` namespaces directly.
+`appkit-chat-completion-*`, `appkit-chat-ins-*`, and `appkit-media-*`
+namespaces directly.
+
+Chat completion is deliberately provider-neutral: appkit owns token bounds,
+candidate metadata, CAPF/picker presentation, atomic commit, and ordered TAB
+dispatch.  Clients own member/emoji lookup, avatar acquisition, protocol
+objects, and insertion callbacks.  A selected mention or sticker therefore
+remains a real client-defined structured composer object rather than appkit
+inventing a wire format.
 
 ## Update model
 
