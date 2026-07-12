@@ -26,6 +26,7 @@
 (require 'appkit-invalidation)
 (require 'appkit-chatbuf)
 (require 'appkit-chat-completion)
+(require 'appkit-chat-emoji)
 (require 'appkit-chat-timeline)
 (require 'appkit-media)
 (require 'appkit-ui)
