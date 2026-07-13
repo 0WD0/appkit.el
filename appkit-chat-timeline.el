@@ -323,16 +323,77 @@ old semantic row keys to new keys."
                        (appkit-chat-timeline--state-after-mutation-function state)))
             (funcall after-mutation)))))))
 
+(defun appkit-chat-timeline--set-header (ewoc header)
+  "Set EWOC HEADER without touching its footer or trailing composer."
+  ;; `ewoc-set-hf' refreshes both sentinels.  A chat buffer keeps its prompt
+  ;; and editable input after the footer, so refreshing the sentinels
+  ;; separately is the only operation with the right ownership boundary.
+  (ewoc--set-buffer-bind-dll-let* ewoc
+      ((node (ewoc--header ewoc))
+       (printer (ewoc--hf-pp ewoc)))
+    (unless (equal (ewoc--node-data node) header)
+      (setf (ewoc--node-data node) header)
+      (ewoc--refresh-node printer node dll))))
+
+(defun appkit-chat-timeline--set-footer (ewoc footer)
+  "Set EWOC FOOTER without touching its trailing composer."
+  (let* ((prompt-marker appkit-chatbuf--prompt-marker)
+         (prompt-live-p
+          (and (markerp prompt-marker)
+               (eq (marker-buffer prompt-marker) (current-buffer))))
+         (old-insertion-type
+          (and prompt-live-p (marker-insertion-type prompt-marker))))
+    ;; Refreshing a footer deletes its old text and inserts the replacement at
+    ;; the same boundary.  Make the prompt marker advance over that insertion;
+    ;; otherwise a growing footer leaves the marker inside EWOC-owned text.
+    (unwind-protect
+        (progn
+          (when prompt-live-p
+            (set-marker-insertion-type prompt-marker t))
+          (ewoc--set-buffer-bind-dll-let* ewoc
+              ((node (ewoc--footer ewoc))
+               (printer (ewoc--hf-pp ewoc)))
+            (unless (equal (ewoc--node-data node) footer)
+              (setf (ewoc--node-data node) footer)
+              (ewoc--refresh-node printer node dll))))
+      (when prompt-live-p
+        (set-marker-insertion-type prompt-marker old-insertion-type)))))
+
 (cl-defun appkit-chat-timeline-set-frame
-    (header footer &key bind-input-function)
-  "Set timeline HEADER and FOOTER and then call BIND-INPUT-FUNCTION."
+    (header footer &key bind-input-function
+            (composer-visible-p nil composer-visible-p-supplied-p))
+  "Set timeline HEADER and FOOTER without rebuilding live input.
+
+The EWOC frame and the trailing composer are separate regions.  Header and
+footer changes are applied to their sentinel nodes in place, like telega's
+chat buffer, so message or metadata redisplay can never delete and recreate
+the user's input.
+
+When BIND-INPUT-FUNCTION is non-nil, call it only when the composer needs to
+be created, removed, or when COMPOSER-VISIBLE-P was not supplied (the legacy
+behaviour).  Clients should supply COMPOSER-VISIBLE-P for stable input."
   (let* ((state (appkit-chat-timeline--require-state))
-         (ewoc (appkit-chat-timeline--state-ewoc state)))
+         (ewoc (appkit-chat-timeline--state-ewoc state))
+         (footer-start (ewoc-location (ewoc--footer ewoc)))
+         (prompt-start (appkit-chatbuf-prompt-start-position))
+         (input-start (appkit-chatbuf-input-start-position))
+         (composer-present-p (or prompt-start input-start))
+         (composer-bound-p
+          (and (appkit-chatbuf-prompt-button-live-p)
+               (<= footer-start prompt-start input-start)))
+         (bind-composer-p
+          (and (functionp bind-input-function)
+               (or (not composer-visible-p-supplied-p)
+                   (if composer-visible-p
+                       (not composer-bound-p)
+                     composer-present-p)))))
+    (when (and composer-present-p (not composer-bound-p))
+      (error "Appkit composer boundary is outside the timeline footer"))
     (appkit-chat-timeline-run-preserving-position
      (lambda ()
-       (appkit-chatbuf-clear-prompt-and-input)
-       (ewoc-set-hf ewoc header footer)
-       (when (functionp bind-input-function)
+       (appkit-chat-timeline--set-header ewoc header)
+       (appkit-chat-timeline--set-footer ewoc footer)
+       (when bind-composer-p
          (funcall bind-input-function))))))
 
 (defun appkit-chat-timeline--validate-rekeys (state row-table rekeys)

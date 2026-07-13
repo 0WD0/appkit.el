@@ -176,6 +176,119 @@
         (should (equal "draft" (appkit-chatbuf-input-string)))
         (should-not buffer-undo-list)))))
 
+(ert-deftest appkit-chat-timeline-frame-update-does-not-rebind-live-composer ()
+  (appkit-test-with-view
+    (let ((prints (make-hash-table :test #'equal))
+          (bind-count 0))
+      (appkit-chatbuf-init-state 8)
+      (appkit-chat-timeline-ensure
+       :printer (appkit-chat-timeline-test--printer prints)
+       :anchor-property 'test-message-key
+       :header "old header\n"
+       :footer "old footer\n")
+      (appkit-chat-timeline-sync
+       (list (appkit-chat-timeline-test--row 'a "A")))
+      (let ((binder
+             (lambda ()
+               (cl-incf bind-count)
+               (appkit-chatbuf-bind-input-region
+                :visible-p t :prompt ">>> " :input-text "draft"))))
+        (appkit-chat-timeline-set-frame
+         "old header\n" "old footer\n"
+         :bind-input-function binder
+         :composer-visible-p t)
+        (let ((prompt-marker appkit-chatbuf--prompt-marker)
+              (input-marker appkit-chatbuf--input-marker))
+          (appkit-chatbuf-input-set-text "live edit")
+          (appkit-chat-timeline-set-frame
+           "new header\n" "a substantially longer new footer\n"
+           :bind-input-function binder
+           :composer-visible-p t)
+          (should (= 1 bind-count))
+          (should (eq prompt-marker appkit-chatbuf--prompt-marker))
+          (should (eq input-marker appkit-chatbuf--input-marker))
+          (should (equal "live edit" (appkit-chatbuf-input-string)))
+          (should (string-match-p "new header" (buffer-string)))
+          (should (string-match-p "substantially longer new footer"
+                                  (buffer-string)))
+          (should (string-match-p "a:A:plain" (buffer-string))))))))
+
+(ert-deftest appkit-chat-timeline-composer-follows-later-row-insertion ()
+  (appkit-test-with-view
+    (let ((prints (make-hash-table :test #'equal)))
+      (appkit-chatbuf-init-state 8)
+      (appkit-chat-timeline-ensure
+       :printer (appkit-chat-timeline-test--printer prints)
+       :anchor-property 'test-message-key
+       :footer "footer\n")
+      ;; This is the client render order: establish the frame/composer first,
+      ;; then reconcile projected message rows.
+      (appkit-chat-timeline-set-frame
+       "" "footer\n"
+       :bind-input-function
+       (lambda ()
+         (appkit-chatbuf-bind-input-region
+          :visible-p t :prompt ">>> " :input-text "draft"))
+       :composer-visible-p t)
+      (appkit-chat-timeline-sync
+       (list (appkit-chat-timeline-test--row 'a "A")
+             (appkit-chat-timeline-test--row 'b "B")))
+      (let ((footer (appkit-chat-timeline-footer-start-position))
+            (prompt (appkit-chatbuf-prompt-start-position))
+            (input (appkit-chatbuf-input-start-position)))
+        (should (<= footer prompt input))
+        (should (appkit-chatbuf-prompt-button-live-p))
+        (should (equal "draft" (appkit-chatbuf-input-string)))
+        (should (string-match-p
+                 "a:A:plain\nb:B:plain\nfooter\n>>> draft\\'"
+                 (buffer-string)))))))
+
+(ert-deftest appkit-chat-timeline-frame-update-removes-hidden-composer-only ()
+  (appkit-test-with-view
+    (let ((prints (make-hash-table :test #'equal)))
+      (appkit-chatbuf-init-state 8)
+      (appkit-chat-timeline-ensure
+       :printer (appkit-chat-timeline-test--printer prints)
+       :anchor-property 'test-message-key)
+      (appkit-chat-timeline-sync
+       (list (appkit-chat-timeline-test--row 'a "A")))
+      (let* ((visible-p t)
+             (binder
+             (lambda ()
+               (appkit-chatbuf-bind-input-region
+                :visible-p visible-p :prompt ">>> " :input-text "draft"))))
+        (appkit-chat-timeline-set-frame
+         "" "" :bind-input-function binder :composer-visible-p t)
+        (setq visible-p nil)
+        (appkit-chat-timeline-set-frame
+         "" "" :bind-input-function binder :composer-visible-p nil)
+        (should-not (appkit-chatbuf-prompt-start-position))
+        (should-not (appkit-chatbuf-input-start-position))
+        (should (string-match-p "a:A:plain" (buffer-string)))))))
+
+(ert-deftest appkit-chat-timeline-frame-update-refuses-crossed-composer-boundary ()
+  (appkit-test-with-view
+    (let ((prints (make-hash-table :test #'equal)))
+      (appkit-chatbuf-init-state 8)
+      (appkit-chat-timeline-ensure
+       :printer (appkit-chat-timeline-test--printer prints)
+       :anchor-property 'test-message-key)
+      (appkit-chat-timeline-sync
+       (list (appkit-chat-timeline-test--row 'a "A")))
+      (appkit-chatbuf-bind-input-region
+       :visible-p t :prompt ">>> " :input-text "draft")
+      ;; Simulate a corrupted external mutation moving the prompt boundary
+      ;; into the EWOC-owned region.  Frame refresh must fail before deleting
+      ;; any text from that marker through `point-max'.
+      (set-marker appkit-chatbuf--prompt-marker (point-min))
+      (let ((before (buffer-string)))
+        (should-error
+         (appkit-chat-timeline-set-frame
+          "new header\n" "new footer\n"
+          :bind-input-function #'ignore
+          :composer-visible-p t))
+        (should (equal before (buffer-string)))))))
+
 (ert-deftest appkit-chat-timeline-rejects-invalid-projections-before-mutation ()
   (appkit-test-with-view
     (let ((prints (make-hash-table :test #'equal)))
