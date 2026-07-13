@@ -833,6 +833,18 @@ negative N delegates to `appkit-chatbuf-input-backward-delete'."
   "Return non-nil when a shared aux state is currently active."
   (not (null appkit-chatbuf--aux-plist)))
 
+(defun appkit-chatbuf-composer-idle-p ()
+  "Return non-nil when the canonical composer has no active content.
+
+Whitespace-only text is idle.  Shared aux state and structured input objects
+remain active even when their plain visible text would otherwise look empty."
+  (let ((input (appkit-chatbuf-input-state)))
+    (and (not (appkit-chatbuf-aux-active-p))
+         (not (appkit-chatbuf-string-has-objects-p input))
+         (string-empty-p
+          (string-trim
+           (appkit-chatbuf-string-plain-text input))))))
+
 (defun appkit-chatbuf-input-options-set (options-plist)
   "Replace current input options state with OPTIONS-PLIST and return it."
   (setq appkit-chatbuf--input-options-plist options-plist))
