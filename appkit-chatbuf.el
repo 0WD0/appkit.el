@@ -31,11 +31,25 @@
 (defconst appkit-chatbuf-input-object-property 'appkit-chatbuf-input-object
   "Text property storing the semantic object represented in chatbuf input.")
 
+(defconst appkit-chatbuf-input-object-span-property
+  'appkit-chatbuf-input-object-span
+  "Text property identifying one structured input object occurrence.
+
+Unlike `appkit-chatbuf-input-object-property', this value is unique for every
+insertion.  Adjacent occurrences may carry the same semantic payload, so
+payload equality must not define their deletion or serialization boundary.")
+
 (defconst appkit-chatbuf-input-object-start-property 'appkit-chatbuf-input-object-start
   "Text property marking the first character of a structured input object.")
 
 (defconst appkit-chatbuf-input-object-end-property 'appkit-chatbuf-input-object-end
   "Text property marking the last character of a structured input object.")
+
+(defconst appkit-chatbuf-input-object-text-property 'appkit-chatbuf-input-object-text
+  "Text property storing the original visible text of an input object.
+
+This lets the shared repair pass reject an object whose interior was edited
+without relying on protocol-specific object payloads.")
 
 (defvar appkit-chatbuf--input-cache)
 
@@ -438,38 +452,145 @@ can use POST-BIND-FUNCTION for owner-specific text properties or local repair."
       (add-text-properties (car bounds) (cdr bounds)
                            '(read-only nil)))))
 
+(defun appkit-chatbuf--change-overlaps-input-p (beg end old-length bounds)
+  "Return non-nil when one after-change event touches input BOUNDS.
+
+BEG, END, and OLD-LENGTH have the meaning documented for
+`after-change-functions'.  In particular, deleting at the first input
+character reports BEG equal to END; testing only the new non-empty span would
+miss that edit and leave canonical composer state stale."
+  (let ((input-start (car bounds))
+        (input-end (cdr bounds)))
+    (or
+     ;; Inserted/replaced text intersects the current input interval.
+     (and (< beg input-end)
+          (> end input-start))
+     ;; A deletion has an empty new interval.  Input is the persistent tail,
+     ;; so a deletion beginning anywhere from its current start through end
+     ;; belongs to it.  A deletion crossing the old marker moves that marker
+     ;; to BEG and is covered by the same test.
+     (and (> (or old-length 0) 0)
+          (<= input-start beg)
+          (<= beg input-end)))))
+
 (cl-defun appkit-chatbuf-after-change
-    (beg end &key rendering-p sync-function prune-broken-objects)
+    (beg end &key old-length rendering-p sync-function prune-broken-objects)
   "Maintain shared input-region invariants after a buffer change.
 
-BEG and END describe the changed region.  When RENDERING-P is non-nil, do
-nothing.  Otherwise, if the change overlaps the current input region, normalize
-input text properties, optionally prune broken structured objects, and then call
-SYNC-FUNCTION when non-nil."
+BEG, END, and OLD-LENGTH describe the change as in `after-change-functions'.
+When RENDERING-P is non-nil, do nothing.  Otherwise, if the change overlaps
+the current input region, normalize input text properties, optionally prune
+broken structured objects, and then call SYNC-FUNCTION when non-nil."
   (unless rendering-p
     (when-let* ((bounds (appkit-chatbuf-input-region-bounds)))
-      (when (and (< beg (cdr bounds))
-                 (> end (car bounds)))
+      (when (appkit-chatbuf--change-overlaps-input-p
+             beg end old-length bounds)
         (appkit-chatbuf-input-apply-text-properties)
         (when prune-broken-objects
           (appkit-chatbuf-input-prune-broken-objects))
         (when (functionp sync-function)
           (funcall sync-function))))))
 
+(defun appkit-chatbuf--next-input-object-start (position object limit)
+  "Return the next object-start sentinel after POSITION, or LIMIT.
+
+OBJECT is the optional string accepted by text-property functions; nil means
+the current buffer."
+  (let ((cursor position)
+        found)
+    (while (and (< cursor limit) (not found))
+      (setq cursor
+            (or (next-single-property-change
+                 cursor appkit-chatbuf-input-object-start-property object limit)
+                limit))
+      (when (and (< cursor limit)
+                 (get-text-property
+                  cursor appkit-chatbuf-input-object-start-property object))
+        (setq found cursor)))
+    (or found limit)))
+
+(defun appkit-chatbuf-next-input-object-change
+    (position &optional object limit)
+  "Return the next structured-object boundary after POSITION.
+
+OBJECT is an optional string; nil means the current buffer.  LIMIT defaults to
+the end of OBJECT or the current buffer.  Boundaries follow the per-occurrence
+span id, while payload changes and start sentinels keep older input strings
+without span ids readable."
+  (let* ((finish (or limit (if (stringp object) (length object) (point-max))))
+         (span-change
+          (or (next-single-property-change
+               position appkit-chatbuf-input-object-span-property object finish)
+              finish))
+         (payload-change
+          (or (next-single-property-change
+               position appkit-chatbuf-input-object-property object finish)
+              finish))
+         (next-start
+          (appkit-chatbuf--next-input-object-start position object finish)))
+    (min span-change payload-change next-start)))
+
 (defun appkit-chatbuf-split-by-text-property (string property)
   "Split STRING by changes of text PROPERTY.
 
-Mirrors `telega--split-by-text-prop' (used by telega-chatbuf input→IMC)."
+Mirrors `telega--split-by-text-prop' (used by telega-chatbuf input→IMC).
+For `appkit-chatbuf-input-object-property', occurrence spans and legacy start
+sentinels keep equal adjacent payloads as separate objects."
   (let ((finish (length string))
         (start 0)
         (pos 0)
         result)
-    (while (and (> finish pos)
-                (setq pos
-                      (next-single-char-property-change pos property string)))
+    (while (< pos finish)
+      (setq pos
+            (if (eq property appkit-chatbuf-input-object-property)
+                (appkit-chatbuf-next-input-object-change pos string finish)
+              (or (next-single-property-change pos property string finish)
+                  finish)))
       (push (substring string start pos) result)
       (setq start pos))
     (nreverse result)))
+
+(cl-defun appkit-chatbuf-input-object-string (content object &key properties)
+  "Return CONTENT encoded as one structured composer OBJECT string.
+
+The returned string includes the trailing boundary spacer used by
+`appkit-chatbuf-input-insert'.  PROPERTIES are additional text properties for
+the complete object span.  This pure constructor lets clients serialize and
+reorder objects without reimplementing Appkit's boundary contract."
+  (unless (stringp content)
+    (user-error "appkit-chatbuf: input content must be a string"))
+  (when (or (null object) (string-empty-p content))
+    (user-error "appkit-chatbuf: structured input objects need content and payload"))
+  (dolist (property (list appkit-chatbuf-input-object-property
+                          appkit-chatbuf-input-object-span-property
+                          appkit-chatbuf-input-object-text-property
+                          appkit-chatbuf-input-object-start-property
+                          appkit-chatbuf-input-object-end-property))
+    (when (plist-member properties property)
+      (user-error "appkit-chatbuf: %S is a reserved object property" property)))
+  (let* ((text (concat content " "))
+         (span-id (make-symbol "appkit-chatbuf-input-object-span"))
+         (body-end (1- (length text))))
+    (add-text-properties
+     0 (length text)
+     (append
+      (list 'face 'appkit-chatbuf-input-object)
+      properties
+      (list appkit-chatbuf-input-object-property object
+            appkit-chatbuf-input-object-span-property span-id
+            appkit-chatbuf-input-object-text-property
+            (substring-no-properties content)
+            'cursor-intangible t))
+     text)
+    (add-text-properties
+     0 1 (list appkit-chatbuf-input-object-start-property t) text)
+    (add-text-properties
+     body-end (length text)
+     (list appkit-chatbuf-input-object-end-property t
+           'rear-nonsticky t
+           'cursor-intangible nil)
+     text)
+    text))
 
 (cl-defun appkit-chatbuf-input-insert (content &key object properties)
   "Insert CONTENT into the current input region.
@@ -480,7 +601,8 @@ PROPERTIES are appended to the inserted text properties.
 
 Attachment layout follows telega's `telega-chatbuf-input-insert':
 
-1. If point is already on an attachment, insert a separating space first.
+1. If point is inside an existing object, move to its trailing boundary first;
+   point exactly at its start remains before it.
 2. Object body carries the object property (+ optional face).
 3. First char gets `appkit-chatbuf-input-object-start-property' (telega
    `attach-open-bracket').
@@ -500,12 +622,16 @@ would otherwise glue it into the attachment."
   (when-let* ((input-start (appkit-chatbuf-input-start-position)))
     (when (< (point) input-start)
       (goto-char (point-max))))
-  ;; telega: when point sits on an existing attach, separate with a space.
+  ;; Never split an atomic object by inserting into its body or end sentinel.
+  ;; At its exact start, point represents the boundary before the object and
+  ;; insertion there remains meaningful.
   (when (and object
              (appkit-chatbuf-input-start-position)
              (>= (point) (appkit-chatbuf-input-start-position))
              (appkit-chatbuf-input-object-at-point (point)))
-    (insert " "))
+    (when-let* ((bounds (appkit-chatbuf-input-object-bounds-at-point (point))))
+      (unless (= (point) (car bounds))
+        (goto-char (cdr bounds)))))
   (if (not object)
       (let ((start (point)))
         (insert content)
@@ -517,29 +643,9 @@ would otherwise glue it into the attachment."
     ;; prune would otherwise see start-without-end and delete the body (image
     ;; labels with `display' properties hit this immediately).  telega applies
     ;; open/close brackets before post-command validation runs.
-    (let ((inhibit-modification-hooks t)
-          (body-start (point)))
-      (insert content)
-      (insert " ")
-      (let ((body-end (1- (point)))
-            (gap-end (point)))
-        (when (< body-start body-end)
-          (add-text-properties
-           body-start gap-end
-           (append
-            (list appkit-chatbuf-input-object-property object
-                  'face 'appkit-chatbuf-input-object
-                  'cursor-intangible t)
-            properties))
-          (add-text-properties body-start (1+ body-start)
-                               (list appkit-chatbuf-input-object-start-property t))
-          ;; Trailing spacer: telega attach-close-bracket + rear-nonsticky t.
-          (add-text-properties body-end gap-end
-                               (list appkit-chatbuf-input-object-end-property t
-                                     'rear-nonsticky t
-                                     ;; Spacer itself should not be intangible so
-                                     ;; the user can place point after the attach.
-                                     'cursor-intangible nil))))))
+    (let ((inhibit-modification-hooks t))
+      (insert (appkit-chatbuf-input-object-string
+               content object :properties properties))))
   (unless (appkit-chatbuf-rendering-p)
     (appkit-chatbuf-input-state-sync)))
 
@@ -556,21 +662,113 @@ would otherwise glue it into the attachment."
 (defun appkit-chatbuf--input-object-region-start (position)
   "Return start position of object region containing POSITION, or nil."
   (when (appkit-chatbuf-input-object-at-point position)
-    (or (previous-single-property-change
-         (1+ position) appkit-chatbuf-input-object-property nil
-         (or (appkit-chatbuf-input-start-position) (point-min)))
-        (appkit-chatbuf-input-start-position)
-        (point-min))))
+    (let* ((lower (or (appkit-chatbuf-input-start-position) (point-min)))
+           (span-id
+            (get-text-property
+             position appkit-chatbuf-input-object-span-property)))
+      (if span-id
+          (or (previous-single-property-change
+               (min (point-max) (1+ position))
+               appkit-chatbuf-input-object-span-property nil lower)
+              lower)
+        ;; Compatibility for strings created before occurrence ids existed.
+        (let ((cursor (min (point-max) (1+ position)))
+              found)
+          (when (get-text-property
+                 position appkit-chatbuf-input-object-start-property)
+            (setq found position))
+          (while (and (> cursor lower) (not found))
+            (setq cursor
+                  (or (previous-single-property-change
+                       cursor appkit-chatbuf-input-object-start-property
+                       nil lower)
+                      lower))
+            (when (get-text-property
+                   cursor appkit-chatbuf-input-object-start-property)
+              (setq found cursor)))
+          (or found
+              (previous-single-property-change
+               (min (point-max) (1+ position))
+               appkit-chatbuf-input-object-property nil lower)
+              lower))))))
 
 (defun appkit-chatbuf-input-object-bounds-at-point (&optional position)
   "Return bounds of structured input object at POSITION or point, or nil."
   (let ((pos (or position (point))))
     (when (appkit-chatbuf-input-object-at-point pos)
       (let* ((start (appkit-chatbuf--input-object-region-start pos))
-             (end (or (next-single-property-change
-                       pos appkit-chatbuf-input-object-property nil (point-max))
-                      (point-max))))
+             (end (appkit-chatbuf-next-input-object-change
+                   pos nil (point-max))))
         (cons start end)))))
+
+(defun appkit-chatbuf--delete-region-expanding-input-objects (beg end)
+  "Delete BEG through END, expanding partial structured-object edges."
+  (let ((expanded-beg beg)
+        (expanded-end end))
+    (when (< expanded-beg expanded-end)
+      (when-let* ((object-bounds
+                   (appkit-chatbuf-input-object-bounds-at-point expanded-beg)))
+        (setq expanded-beg (car object-bounds)))
+      (when-let* ((object-bounds
+                   (appkit-chatbuf-input-object-bounds-at-point
+                    (1- expanded-end))))
+        (setq expanded-end (cdr object-bounds))))
+    (delete-region expanded-beg expanded-end)))
+
+(defun appkit-chatbuf-input-backward-delete (n)
+  "Delete N composer units backward, treating each input object atomically.
+
+Outside the active composer this behaves like
+`backward-delete-char-untabify'.  A negative N delegates to
+`appkit-chatbuf-input-forward-delete'."
+  (interactive "p")
+  (cond
+   ((< n 0)
+    (appkit-chatbuf-input-forward-delete (- n)))
+   ((not (appkit-chatbuf-point-in-input-p))
+    (backward-delete-char-untabify n))
+   (t
+    (unwind-protect
+        (if (use-region-p)
+            (appkit-chatbuf--delete-region-expanding-input-objects
+             (region-beginning) (region-end))
+          (dotimes (_ n)
+            (let ((input-start (appkit-chatbuf-input-start-position)))
+              (when (or (not input-start) (<= (point) input-start))
+                (user-error "Beginning of composer input"))
+              (if-let* ((object-bounds
+                         (appkit-chatbuf-input-object-bounds-at-point
+                          (1- (point)))))
+                  (delete-region (car object-bounds) (cdr object-bounds))
+                (backward-delete-char-untabify 1)))))
+      (unless (appkit-chatbuf-rendering-p)
+        (appkit-chatbuf-input-state-sync))))))
+
+(defun appkit-chatbuf-input-forward-delete (n)
+  "Delete N composer units forward, treating each input object atomically.
+
+Outside the active composer this behaves like `delete-char'.  A
+negative N delegates to `appkit-chatbuf-input-backward-delete'."
+  (interactive "p")
+  (cond
+   ((< n 0)
+    (appkit-chatbuf-input-backward-delete (- n)))
+   ((not (appkit-chatbuf-point-in-input-p))
+    (delete-char n))
+   (t
+    (unwind-protect
+        (if (use-region-p)
+            (appkit-chatbuf--delete-region-expanding-input-objects
+             (region-beginning) (region-end))
+          (dotimes (_ n)
+            (when (>= (point) (point-max))
+              (user-error "End of composer input"))
+            (if-let* ((object-bounds
+                       (appkit-chatbuf-input-object-bounds-at-point (point))))
+                (delete-region (car object-bounds) (cdr object-bounds))
+              (delete-char 1))))
+      (unless (appkit-chatbuf-rendering-p)
+        (appkit-chatbuf-input-state-sync))))))
 
 (defun appkit-chatbuf-input-prune-broken-objects ()
   "Delete structured input objects whose boundary markers became invalid."
@@ -582,21 +780,27 @@ would otherwise glue it into the attachment."
         (let ((object (get-text-property pos appkit-chatbuf-input-object-property)))
           (if object
               (let* ((start (or (appkit-chatbuf--input-object-region-start pos) pos))
-                     (end (or (next-single-property-change
-                               pos appkit-chatbuf-input-object-property nil limit)
-                              limit))
+                     (end (appkit-chatbuf-next-input-object-change pos nil limit))
                      (valid-start (get-text-property start
                                                      appkit-chatbuf-input-object-start-property))
                      (valid-end (get-text-property (1- end)
-                                                   appkit-chatbuf-input-object-end-property)))
-                (if (and valid-start valid-end)
+                                                   appkit-chatbuf-input-object-end-property))
+                     (expected-text
+                      (get-text-property
+                       start appkit-chatbuf-input-object-text-property))
+                     (actual-text
+                      (and valid-end
+                           (buffer-substring-no-properties start (1- end)))))
+                (if (and valid-start
+                         valid-end
+                         (or (not (stringp expected-text))
+                             (equal expected-text actual-text)))
                     (setq pos end)
                   (delete-region start end)
                   (setq limit (point-max))
                   (setq pos start)))
-            (setq pos (or (next-single-property-change
-                           pos appkit-chatbuf-input-object-property nil limit)
-                          limit))))))))
+            (setq pos (appkit-chatbuf-next-input-object-change
+                       pos nil limit))))))))
 
 (defun appkit-chatbuf-aux-set (aux-plist)
   "Replace current aux state with AUX-PLIST and return it."
