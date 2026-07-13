@@ -155,6 +155,25 @@ the returned image spec.  IMAGE remains suitable for immutable caches."
   (and (eq (car-safe image) 'image)
        (plist-get (cdr image) :appkit-media-inline-animation)))
 
+(defun appkit-media-image-display-string (image fallback)
+  "Return FALLBACK displayed as IMAGE, or FALLBACK when IMAGE is nil.
+
+Animated cache descriptors are copied into buffer-owned playback occurrences
+before display, so callers do not need to invoke Appkit's private animation
+registry functions."
+  (if (not image)
+      fallback
+    (let ((render-image
+           (if (appkit-media-inline-animation-image-p image)
+               (appkit-media--make-inline-animation-occurrence image)
+             image)))
+      (when (not (eq render-image image))
+        (appkit-media--register-inline-animation-occurrence render-image)
+        (appkit-media--install-inline-animation-discovery))
+      (propertize (or fallback " ")
+                  'display render-image
+                  'rear-nonsticky '(display)))))
+
 (defun appkit-media-stop-inline-animation (image)
   "Stop bounded inline playback for IMAGE and reset it to frame zero."
   (when (appkit-media--inline-animation-occurrence-p image)
@@ -435,6 +454,16 @@ MAX-WIDTH and MAX-HEIGHT default to `appkit-media-preview-max-width' and
                               :ascent 'center)))))
     (and (appkit-media-image-object-valid-p image)
          (appkit-media--mark-inline-animation-image image file))))
+
+(defun appkit-media-one-line-preview-image-from-file (file &optional max-width)
+  "Create a one-text-line-high preview for local FILE.
+
+The image keeps its aspect ratio and tracks text scaling through a `ch' image
+height on modern Emacs.  MAX-WIDTH guides aspect-ratio sizing, but the preview
+never shrinks below one text line.  This is intended for compact composer
+attachment tokens rather than timeline media cards."
+  (appkit-media-preview-image-from-file
+   file max-width (appkit-media--char-pixel-height)))
 
 (defun appkit-media--bytes-prefix-p (bytes offset prefix-bytes)
   "Return non-nil when BYTES at OFFSET starts with PREFIX-BYTES."
