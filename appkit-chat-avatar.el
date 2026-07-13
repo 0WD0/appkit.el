@@ -46,39 +46,47 @@ considering visible and other frames."
 
 (defun appkit-chat-avatar-line-pixel-height ()
   "Return one default-face text line's pixel height in the current buffer."
-  (let ((window (appkit-chat-avatar--render-window)))
-    (max
-     1
-     (or (and window
-              (let* ((font-height
-                      (ignore-errors
-                        (window-font-height window 'default)))
-                     (spacing
-                      (or line-spacing
-                          (frame-parameter (window-frame window)
-                                           'line-spacing))))
-                (and (numberp font-height)
-                     (+ font-height
-                        (appkit-chat-avatar--spacing-pixels
-                         spacing font-height)))))
-         ;; `default-line-height' already includes buffer/frame line spacing.
-         (ignore-errors (default-line-height))
-         (frame-char-height)
-         16))))
+  ;; `window-font-height' can move point to WINDOW's window-point when WINDOW
+  ;; is not selected.  Avatar geometry is commonly measured from inside an
+  ;; EWOC printer while another window has focus, so leaking that movement
+  ;; makes the remainder of the row print at an unrelated buffer position.
+  (save-excursion
+    (let ((window (appkit-chat-avatar--render-window)))
+      (max
+       1
+       (or (and window
+                (let* ((font-height
+                        (ignore-errors
+                          (window-font-height window 'default)))
+                       (spacing
+                        (or line-spacing
+                            (frame-parameter (window-frame window)
+                                             'line-spacing))))
+                  (and (numberp font-height)
+                       (+ font-height
+                          (appkit-chat-avatar--spacing-pixels
+                           spacing font-height)))))
+           ;; `default-line-height' already includes buffer/frame line spacing.
+           (ignore-errors (default-line-height))
+           (frame-char-height)
+           16)))))
 
 (defun appkit-chat-avatar-column-pixel-width ()
   "Return one default-face text column's pixel width in the current buffer."
-  (let ((window (appkit-chat-avatar--render-window)))
-    (max 1
-         (or (and window
-                  (ignore-errors (window-font-width window 'default)))
-             (and (fboundp 'string-pixel-width)
-                  (ignore-errors
-                    (string-pixel-width
-                     (propertize " " 'face 'default)
-                     (current-buffer))))
-             (frame-char-width)
-             1))))
+  ;; Keep geometry queries observational: window font APIs may select the
+  ;; queried window's point as an implementation detail.
+  (save-excursion
+    (let ((window (appkit-chat-avatar--render-window)))
+      (max 1
+           (or (and window
+                    (ignore-errors (window-font-width window 'default)))
+               (and (fboundp 'string-pixel-width)
+                    (ignore-errors
+                      (string-pixel-width
+                       (propertize " " 'face 'default)
+                       (current-buffer))))
+               (frame-char-width)
+               1)))))
 
 (defun appkit-chat-avatar--render-frame ()
   "Return the frame used to render avatars for the current buffer."
