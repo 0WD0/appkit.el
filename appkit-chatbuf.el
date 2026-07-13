@@ -335,9 +335,14 @@ PROMPT defaults to `>>> '.  If a prompt already exists, update it in place."
       (appkit-chatbuf-prompt-update prompt)
     (let ((prompt-text (or prompt ">>> ")))
       (goto-char (point-max))
+      ;; The prompt lives after the EWOC footer.  Keep its marker advancing
+      ;; when timeline rows are inserted at that boundary, but not while the
+      ;; prompt text itself is being inserted.
+      (set-marker-insertion-type appkit-chatbuf--prompt-marker nil)
       (set-marker appkit-chatbuf--prompt-marker (point) (current-buffer))
       (setq appkit-chatbuf--prompt-button
             (insert-text-button prompt-text 'type 'appkit-chatbuf-prompt))
+      (set-marker-insertion-type appkit-chatbuf--prompt-marker t)
       (set-marker appkit-chatbuf--input-marker (point) (current-buffer))
       appkit-chatbuf--prompt-button)))
 
@@ -357,9 +362,11 @@ point is restored relative to the input start when it was inside the input."
     (save-excursion
       (delete-region prompt-start input-start)
       (goto-char prompt-start)
+      (set-marker-insertion-type appkit-chatbuf--prompt-marker nil)
       (set-marker appkit-chatbuf--prompt-marker (point) (current-buffer))
       (setq appkit-chatbuf--prompt-button
             (insert-text-button prompt-text 'type 'appkit-chatbuf-prompt))
+      (set-marker-insertion-type appkit-chatbuf--prompt-marker t)
       (set-marker appkit-chatbuf--input-marker (point) (current-buffer)))
     (appkit-chatbuf--restore-input-point input-offset)
     appkit-chatbuf--prompt-button))
