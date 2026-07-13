@@ -78,6 +78,116 @@
     (should (string-match-p "first line second line third"
                             (buffer-string)))))
 
+(ert-deftest appkit-view-one-line-row-places-normalized-context-trail-inside-brackets ()
+  (with-temp-buffer
+    (appkit-view-insert-one-line-row
+     (appkit-view-one-line-row-create
+      :context "Group"
+      :context-trail "  7\nnew  "
+      :preview "preview")
+     :width 60
+     :context-width-spec 20)
+    (goto-char (point-min))
+    (let ((open (search-forward "["))
+          (context (search-forward "Group"))
+          (trail (search-forward "7 new"))
+          (close (search-forward "]")))
+      (should (< open context trail close)))
+    (should (= 1 (count-lines (point-min) (point-max))))))
+
+(ert-deftest appkit-view-one-line-row-applies-face-only-to-context-trail ()
+  (with-temp-buffer
+    (let ((trail (propertize "42" 'appkit-test-trail t)))
+      (appkit-view-insert-one-line-row
+       (appkit-view-one-line-row-create
+        :context "Group"
+        :context-trail trail
+        :context-trail-face 'font-lock-warning-face
+        :preview "preview")
+       :width 60
+       :context-width-spec 20))
+    (goto-char (point-min))
+    (search-forward "42")
+    (let ((trail-start (- (point) 2))
+          (close (point)))
+      (should (eq 'font-lock-warning-face
+                  (get-text-property trail-start 'face)))
+      (should (get-text-property trail-start 'appkit-test-trail))
+      (should-not (get-text-property (1- trail-start) 'face))
+      (should-not (get-text-property close 'face)))))
+
+(ert-deftest appkit-view-one-line-row-preserves-context-trail-text-properties ()
+  (with-temp-buffer
+    (appkit-view-insert-one-line-row
+     (appkit-view-one-line-row-create
+      :context "Group"
+      :context-trail
+      (concat (propertize "12\n" 'face 'success)
+              (propertize "@3" 'face 'warning))
+      :preview "preview")
+     :width 60
+     :context-width-spec 20)
+    (goto-char (point-min))
+    (search-forward "12 @3")
+    (let ((trail-start (- (point) 5)))
+      (should (eq 'success (get-text-property trail-start 'face)))
+      (should (eq 'success (get-text-property (1+ trail-start) 'face)))
+      (should (eq 'warning (get-text-property (+ trail-start 3) 'face)))
+      (should (eq 'warning (get-text-property (+ trail-start 4) 'face))))))
+
+(ert-deftest appkit-view-one-line-row-keeps-context-column-with-trails ()
+  (with-temp-buffer
+    (dolist (trail '(nil "7" "12345"))
+      (appkit-view-insert-one-line-row
+       (appkit-view-one-line-row-create
+        :context "Group"
+        :context-trail trail
+        :preview "preview")
+       :width 60
+       :context-width-spec 20))
+    (let (closing-columns)
+      (goto-char (point-min))
+      (dotimes (_ 3)
+        (search-forward "]" (line-end-position))
+        (backward-char)
+        (push (current-column) closing-columns)
+        (forward-line 1))
+      (should (= 1 (length (delete-dups closing-columns)))))))
+
+(ert-deftest appkit-view-one-line-row-long-context-retains-right-aligned-trail ()
+  (with-temp-buffer
+    (appkit-view-insert-one-line-row
+     (appkit-view-one-line-row-create
+      :context (make-string 80 ?x)
+      :context-trail "NEW"
+      :preview "preview")
+     :width 60
+     :context-width-spec 16)
+    (goto-char (point-min))
+    (search-forward "NEW")
+    (let* ((trail-start (- (point) 3))
+           (trail-column (save-excursion
+                           (goto-char trail-start)
+                           (current-column)))
+           (separator-column (save-excursion
+                               (goto-char (1- trail-start))
+                               (current-column)))
+           (close-column (save-excursion
+                           (search-forward "]")
+                           (backward-char)
+                           (current-column))))
+      (should (= trail-column (- close-column 3)))
+      (should (>= (- trail-column separator-column) 2))
+      (should-not (get-text-property trail-start 'display))
+      (should (equal "…"
+                     (save-excursion
+                       (goto-char (point-min))
+                       (search-forward "[")
+                       (get-text-property
+                        (next-single-property-change
+                         (point) 'display nil trail-start)
+                        'display)))))))
+
 (ert-deftest appkit-view-one-line-row-does-not-infer-hover-from-help ()
   (with-temp-buffer
     (appkit-view-insert-one-line-row
