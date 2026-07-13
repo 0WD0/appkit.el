@@ -85,6 +85,71 @@ text properties passed to `insert-text-button'."
           properties)))
     (apply #'insert-text-button label button-props)))
 
+(defvar appkit-ui-action-row-map
+  (let ((map (make-sparse-keymap)))
+    ;; Keep primary-click activation direct.  In particular, do not inherit
+    ;; `button-map' or bind `follow-link': either would let Emacs translate a
+    ;; mouse-1 event before the button at the event position is dispatched.
+    (define-key map (kbd "RET") #'push-button)
+    (define-key map [down-mouse-1] #'ignore)
+    (define-key map [mouse-1] #'push-button)
+    ;; Retain the traditional button activation gesture explicitly, without
+    ;; inheriting any of the default button keymap's link behavior.
+    (define-key map [mouse-2] #'push-button)
+    map)
+  "Keymap used by whole-row Appkit action buttons.")
+
+(defun appkit-ui--activate-action-row (button)
+  "Activate action-row BUTTON using its exact stored object and action."
+  (let ((object (button-get button 'appkit-ui-action-row-object))
+        (action (button-get button 'appkit-ui-action-row-action)))
+    (funcall action object)))
+
+(define-button-type 'appkit-ui-action-row-button
+  'face nil
+  'mouse-face nil
+  'help-echo nil
+  'follow-link nil
+  'keymap appkit-ui-action-row-map
+  'action #'appkit-ui--activate-action-row)
+
+(cl-defun appkit-ui-make-action-row
+    (start end object action &key help-echo mouse-face)
+  "Make START..END an action row invoking ACTION with OBJECT.
+
+ACTION must be callable.  HELP-ECHO supplies hover help, while MOUSE-FACE
+controls hover highlighting explicitly and defaults to nil.  When END follows
+a terminating newline, that newline is excluded from the button.  Action rows
+must otherwise be single-line.  Return the text button, or nil when ACTION is
+invalid, the resulting span is empty, or it contains an internal newline."
+  (let ((row-start (and (integer-or-marker-p start)
+                        (if (markerp start) (marker-position start) start)))
+        (row-end (and (integer-or-marker-p end)
+                      (if (markerp end) (marker-position end) end))))
+    (when (and (functionp action)
+               (integerp row-start)
+               (integerp row-end)
+               (<= (point-min) row-start)
+               (<= row-start row-end)
+               (<= row-end (point-max)))
+      (when (and (< row-start row-end)
+                 (eq (char-before row-end) ?\n))
+        (setq row-end (1- row-end)))
+      (when (and (< row-start row-end)
+                 (not (save-excursion
+                        (goto-char row-start)
+                        (search-forward "\n" row-end t))))
+        (make-text-button
+         row-start row-end
+         :type 'appkit-ui-action-row-button
+         'mouse-face mouse-face
+         'help-echo help-echo
+         'follow-link nil
+         'keymap appkit-ui-action-row-map
+         'action #'appkit-ui--activate-action-row
+         'appkit-ui-action-row-object object
+         'appkit-ui-action-row-action action)))))
+
 ;;; ── Prefix state machinery ─────────────────────────────────────────
 
 (defconst appkit-ui--prefix-state-tag 'appkit-ui-prefix-state
