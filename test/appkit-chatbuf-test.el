@@ -379,6 +379,23 @@
     (appkit-chatbuf-aux-reset)
     (should-not (appkit-chatbuf-aux-active-p))))
 
+(ert-deftest appkit-chatbuf-composer-idle-rejects-semantic-content ()
+  (with-temp-buffer
+    (appkit-chatbuf-init-state)
+    (should (appkit-chatbuf-composer-idle-p))
+    (appkit-chatbuf-input-state-set "  \n\t")
+    (should (appkit-chatbuf-composer-idle-p))
+    (appkit-chatbuf-input-state-set "hello")
+    (should-not (appkit-chatbuf-composer-idle-p))
+    (appkit-chatbuf-input-state-clear)
+    (appkit-chatbuf-aux-set '(:aux-type reply))
+    (should-not (appkit-chatbuf-composer-idle-p))
+    (appkit-chatbuf-aux-reset)
+    (appkit-chatbuf-input-state-set
+     (appkit-chatbuf-input-object-string
+      "[image]" '(:kind image :path "/tmp/image.png")))
+    (should-not (appkit-chatbuf-composer-idle-p))))
+
 (ert-deftest appkit-chatbuf-input-options-state-roundtrip ()
   (with-temp-buffer
     (appkit-chatbuf-init-state)
