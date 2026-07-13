@@ -385,6 +385,27 @@
         (should-not (plist-member created-properties :disco-nslices))
         (should-not (plist-member created-properties :telega-nslices))))))
 
+(ert-deftest appkit-media-one-line-preview-uses-current-character-height ()
+  (let (arguments)
+    (cl-letf (((symbol-function 'appkit-media--char-pixel-height)
+               (lambda () 24))
+              ((symbol-function 'appkit-media-preview-image-from-file)
+               (lambda (&rest args)
+                 (setq arguments args)
+                 :image)))
+      (should (eq :image
+                  (appkit-media-one-line-preview-image-from-file
+                   "/tmp/example.png" 300)))
+      (should (equal '("/tmp/example.png" 300 24) arguments)))))
+
+(ert-deftest appkit-media-image-display-string-keeps-fallback-and-display ()
+  (let* ((image '(image :type png :data "bytes"))
+         (rendered (appkit-media-image-display-string image "[image]")))
+    (should (equal "[image]" (substring-no-properties rendered)))
+    (should (eq image (get-text-property 0 'display rendered)))
+    (should (equal "[image]"
+                   (appkit-media-image-display-string nil "[image]")))))
+
 (ert-deftest appkit-media-normalizes-known-image-leading-newline ()
   (let* ((png (concat (unibyte-string 137 80 78 71 13 10 26 10) "data"))
          (jpeg (concat (unibyte-string 255 216 255) "data"))

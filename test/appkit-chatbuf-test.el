@@ -162,6 +162,133 @@
     (should (equal "" (or (appkit-chatbuf-input-string) "")))
     (should-not (appkit-chatbuf-input-has-objects-p))))
 
+(ert-deftest appkit-chatbuf-after-change-syncs-deletion-at-input-start ()
+  (with-temp-buffer
+    (appkit-chatbuf-install-prompt ">>> ")
+    (appkit-chatbuf-input-set-text "deleted")
+    (add-hook
+     'after-change-functions
+     (lambda (beg end old-length)
+       (appkit-chatbuf-after-change
+        beg end
+        :old-length old-length
+        :sync-function #'appkit-chatbuf-input-state-sync))
+     nil t)
+    (delete-region (appkit-chatbuf-input-start-position) (point-max))
+    (should (equal "" (appkit-chatbuf-input-state)))
+    ;; A later frame rebind must not resurrect the stale canonical value.
+    (appkit-chatbuf-bind-input-region
+     :visible-p t :prompt ">>> " :input-text (appkit-chatbuf-input-state))
+    (should (equal "" (appkit-chatbuf-input-string)))))
+
+(ert-deftest appkit-chatbuf-after-change-syncs-backspace-at-input-end ()
+  (with-temp-buffer
+    (appkit-chatbuf-install-prompt ">>> ")
+    (appkit-chatbuf-input-set-text "abc")
+    (add-hook
+     'after-change-functions
+     (lambda (beg end old-length)
+       (appkit-chatbuf-after-change
+        beg end
+        :old-length old-length
+        :sync-function #'appkit-chatbuf-input-state-sync))
+     nil t)
+    (goto-char (point-max))
+    (delete-backward-char 1)
+    (should (equal "ab" (appkit-chatbuf-input-state)))
+    (appkit-chatbuf-bind-input-region
+     :visible-p t :prompt ">>> " :input-text (appkit-chatbuf-input-state))
+    (should (equal "ab" (appkit-chatbuf-input-string)))))
+
+(ert-deftest appkit-chatbuf-input-objects-delete-as-one-unit ()
+  (with-temp-buffer
+    (appkit-chatbuf-install-prompt ">>> ")
+    (appkit-chatbuf-input-insert
+     "@Alice" :object '(:kind mention :user-id "1"))
+    (insert "after")
+    (goto-char (+ (appkit-chatbuf-input-start-position) 7))
+    (appkit-chatbuf-input-backward-delete 1)
+    (should (equal "after" (appkit-chatbuf-input-string)))
+    (goto-char (appkit-chatbuf-input-start-position))
+    (appkit-chatbuf-input-insert
+     "@Alice" :object '(:kind mention :user-id "1"))
+    (goto-char (appkit-chatbuf-input-start-position))
+    (appkit-chatbuf-input-forward-delete 1)
+    (should (equal "after" (appkit-chatbuf-input-string)))
+    (should (equal "after" (appkit-chatbuf-input-state)))))
+
+(ert-deftest appkit-chatbuf-equal-adjacent-objects-keep-distinct-spans ()
+  (with-temp-buffer
+    (appkit-chatbuf-install-prompt ">>> ")
+    (let ((object '(:kind mention :user-id "1")))
+      ;; Reusing the exact payload instance must not merge occurrences.
+      (appkit-chatbuf-input-insert "@Alice" :object object)
+      (appkit-chatbuf-input-insert "@Alice" :object object)
+      (let* ((input (appkit-chatbuf-input-string))
+             (chunks
+              (appkit-chatbuf-split-by-text-property
+               input appkit-chatbuf-input-object-property)))
+        (should (= 2 (length chunks)))
+        (should (equal '("@Alice " "@Alice ")
+                       (mapcar #'substring-no-properties chunks))))
+      (goto-char (point-max))
+      (appkit-chatbuf-input-backward-delete 1)
+      (should (equal "@Alice " (appkit-chatbuf-input-string)))
+      (should (equal "@Alice " (appkit-chatbuf-input-state)))
+      (should (equal object
+                     (appkit-chatbuf-input-object-at-point
+                      (appkit-chatbuf-input-start-position)))))))
+
+(ert-deftest appkit-chatbuf-object-insertion-never-splits-existing-object ()
+  (with-temp-buffer
+    (appkit-chatbuf-install-prompt ">>> ")
+    (appkit-chatbuf-input-insert "@Alice" :object '(:id "1"))
+    ;; An unexpected point inside an intangible body normalizes after it.
+    (goto-char (1+ (appkit-chatbuf-input-start-position)))
+    (appkit-chatbuf-input-insert "@Bob" :object '(:id "2"))
+    (appkit-chatbuf-input-prune-broken-objects)
+    (should (equal "@Alice @Bob " (appkit-chatbuf-input-string)))
+    ;; Its exact start is the meaningful boundary before the block.
+    (goto-char (appkit-chatbuf-input-start-position))
+    (appkit-chatbuf-input-insert "@Carol" :object '(:id "3"))
+    (appkit-chatbuf-input-prune-broken-objects)
+    (should (equal "@Carol @Alice @Bob "
+                   (appkit-chatbuf-input-string)))
+    (should (= 3
+               (length
+                (appkit-chatbuf-split-by-text-property
+                 (appkit-chatbuf-input-string)
+                 appkit-chatbuf-input-object-property))))))
+
+(ert-deftest appkit-chatbuf-input-object-string-uses-canonical-boundaries ()
+  (let* ((object '(:kind attachment :path "/tmp/a.png"))
+         (text (appkit-chatbuf-input-object-string "[image]" object)))
+    (should (equal "[image] " (substring-no-properties text)))
+    (should (equal object
+                   (get-text-property
+                    0 appkit-chatbuf-input-object-property text)))
+    (should (symbolp
+             (get-text-property
+              0 appkit-chatbuf-input-object-span-property text)))
+    (should (get-text-property
+             0 appkit-chatbuf-input-object-start-property text))
+    (should (get-text-property
+             (1- (length text)) appkit-chatbuf-input-object-end-property text))
+    (should (equal "[image]"
+                   (get-text-property
+                    0 appkit-chatbuf-input-object-text-property text)))))
+
+(ert-deftest appkit-chatbuf-prunes-object-after-interior-edit ()
+  (with-temp-buffer
+    (appkit-chatbuf-install-prompt ">>> ")
+    (appkit-chatbuf-input-insert
+     "@Alice" :object '(:kind mention :user-id "1"))
+    (goto-char (+ (appkit-chatbuf-input-start-position) 2))
+    (let ((inhibit-modification-hooks t))
+      (delete-char 1))
+    (appkit-chatbuf-input-prune-broken-objects)
+    (should (equal "" (appkit-chatbuf-input-string)))))
+
 (ert-deftest appkit-chatbuf-input-history-restores-pending-input ()
   (with-temp-buffer
     (appkit-chatbuf-init-state 8)
