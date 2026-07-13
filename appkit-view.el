@@ -131,6 +131,8 @@ HELP-ECHO, and MOUSE-FACE customize its presentation and interaction."
                (:constructor appkit-view-one-line-row-create))
   icon-inserter
   context
+  context-trail
+  context-trail-face
   preview
   preview-leading-length
   preview-leading-face
@@ -425,10 +427,15 @@ ROW is a `appkit-view-one-line-row' object.  INDENT is left padding in spaces.
 WIDTH sets the total row width.  ICON-SLOT-WIDTH reserves columns for the
 icon slot.  CONTEXT-WIDTH-SPEC controls context width using
 `appkit-view-canonicalize-number' semantics.  TIME-SLOT-WIDTH reserves a stable
-right-aligned timestamp column."
+right-aligned timestamp column.  A non-empty context trail is kept inside the
+context brackets and aligned to their right edge; its width is reserved before
+the context is elided."
   (let* ((padding (make-string (max 0 (or indent 0)) ?\s))
          (context-text
           (appkit-view--one-line-text (appkit-view-one-line-row-context row)))
+         (context-trail-text
+          (appkit-view--one-line-text
+           (appkit-view-one-line-row-context-trail row)))
          (preview-text
           (appkit-view--one-line-text (appkit-view-one-line-row-preview row)))
          (time-text
@@ -462,9 +469,40 @@ right-aligned timestamp column."
            (separator-width (or (plist-get widths :separator-width) 0)))
       (let ((context-start (appkit-view-current-column)))
         (insert "[")
-        (insert (appkit-view-elide-string-for-columns
-                 context-text context-inner-width 'default))
-        (appkit-view-move-to-column (+ context-start 1 context-inner-width))
+        (if (string-empty-p context-trail-text)
+            (progn
+              (insert (appkit-view-elide-string-for-columns
+                       context-text context-inner-width 'default))
+              (appkit-view-move-to-column
+               (+ context-start 1 context-inner-width)))
+          (let* ((raw-trail-width (string-width context-trail-text))
+                 (trail-width (min context-inner-width raw-trail-width))
+                 (trail-start-offset
+                  (max 0 (- context-inner-width trail-width)))
+                 (context-separator-width
+                  (if (and (not (string-empty-p context-text))
+                           (> trail-start-offset 0))
+                      1
+                    0))
+                 (context-width
+                  (max 0 (- trail-start-offset context-separator-width)))
+                 (trail-text
+                  (if (> raw-trail-width trail-width)
+                      (appkit-view-elide-string-for-columns
+                       context-trail-text trail-width
+                       (appkit-view-one-line-row-context-trail-face row))
+                    context-trail-text)))
+            (when (> context-width 0)
+              (insert (appkit-view-elide-string-for-columns
+                       context-text context-width 'default)))
+            (appkit-view-move-to-column
+             (+ context-start 1 trail-start-offset))
+            (let ((trail-start (point)))
+              (insert trail-text)
+              (when-let* ((trail-face
+                           (appkit-view-one-line-row-context-trail-face row)))
+                (add-text-properties trail-start (point)
+                                     (list 'face trail-face))))))
         (insert "]"))
       (when (> preview-width 0)
         (when (> separator-width 0)
