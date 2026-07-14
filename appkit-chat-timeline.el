@@ -230,8 +230,33 @@ entry and returns opaque resource keys whose changes should redraw the row."
         (cons start end)))))
 
 (defun appkit-chat-timeline-footer-start-position ()
-  "Return the current EWOC footer start position, or nil."
-  (car-safe (appkit-chat-timeline--footer-region-bounds)))
+  "Return the current EWOC footer start as an integer, or nil.
+
+EWOC owns its boundary as a marker.  Do not leak that mutable representation
+through this position API: history gates deliberately accept numeric geometry
+only."
+  (when-let* ((start (car-safe
+                      (appkit-chat-timeline--footer-region-bounds))))
+    (if (markerp start)
+        (marker-position start)
+      start)))
+
+(defun appkit-chat-timeline-window-visible-end-position (window)
+  "Return WINDOW's visible timeline end in the current buffer, or nil.
+
+The window end may extend through the EWOC footer into the trailing composer.
+Clamp it to the footer boundary so clients can use this value for history-edge
+decisions without treating application-owned input as timeline content.
+
+Unlike point, this value follows mouse-wheel, scroll-bar, and indirect-window
+scrolling even when those operations leave the window point unchanged."
+  (when (and (window-live-p window)
+             (eq (window-buffer window) (current-buffer)))
+    (when-let* ((visible-end (window-end window t)))
+      (let ((footer (appkit-chat-timeline-footer-start-position)))
+        (if (numberp footer)
+            (min visible-end footer)
+          visible-end)))))
 
 (defun appkit-chat-timeline--position-zone-state (position preserve-window-start)
   "Capture semantic state for POSITION in the current timeline.
