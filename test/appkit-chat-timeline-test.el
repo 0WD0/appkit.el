@@ -236,6 +236,7 @@
       (let ((footer (appkit-chat-timeline-footer-start-position))
             (prompt (appkit-chatbuf-prompt-start-position))
             (input (appkit-chatbuf-input-start-position)))
+        (should (integerp footer))
         (should (<= footer prompt input))
         (should (appkit-chatbuf-prompt-button-live-p))
         (should (equal "draft" (appkit-chatbuf-input-string)))
@@ -288,6 +289,45 @@
           :bind-input-function #'ignore
           :composer-visible-p t))
         (should (equal before (buffer-string)))))))
+
+(ert-deftest appkit-chat-timeline-window-visible-end-stops-at-footer ()
+  (appkit-test-with-view
+    (let ((window 'test-window)
+          (buffer (current-buffer))
+          (window-end-position 900)
+          (footer-position 1000))
+      (cl-letf (((symbol-function 'window-live-p)
+                 (lambda (candidate) (eq candidate window)))
+                ((symbol-function 'window-buffer)
+                 (lambda (_window) buffer))
+                ((symbol-function 'window-end)
+                 (lambda (_window update)
+                   (should update)
+                   window-end-position))
+                ((symbol-function 'appkit-chat-timeline-footer-start-position)
+                 (lambda () footer-position)))
+        (should (= 900
+                   (appkit-chat-timeline-window-visible-end-position window)))
+        (setq window-end-position 1200)
+        (should (= 1000
+                   (appkit-chat-timeline-window-visible-end-position window)))
+        (setq footer-position nil)
+        (should (= 1200
+                   (appkit-chat-timeline-window-visible-end-position window)))))))
+
+(ert-deftest appkit-chat-timeline-window-visible-end-rejects-foreign-window ()
+  (appkit-test-with-view
+    (let ((window 'test-window))
+      (cl-letf (((symbol-function 'window-live-p) (lambda (_window) t))
+                ((symbol-function 'window-buffer)
+                 (lambda (_window) (get-buffer-create " *appkit-foreign*")))
+                ((symbol-function 'window-end)
+                 (lambda (&rest _args)
+                   (ert-fail "foreign window end must not be inspected"))))
+        (unwind-protect
+            (should-not
+             (appkit-chat-timeline-window-visible-end-position window))
+          (kill-buffer " *appkit-foreign*"))))))
 
 (ert-deftest appkit-chat-timeline-rejects-invalid-projections-before-mutation ()
   (appkit-test-with-view
