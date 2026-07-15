@@ -189,6 +189,16 @@ CANCEL-FUNCTION, when non-nil, receives OBJECT."
                                (cons handle (appkit--owner-handles owner)))
     handle))
 
+(defun appkit-retire-handle (handle)
+  "Retire lifecycle HANDLE without invoking its cancellation side effect."
+  (when (and (appkit-handle-p handle) (appkit-handle-alive-p handle))
+    (setf (appkit-handle-alive-p handle) nil)
+    (let ((owner (appkit-handle-owner handle)))
+      (when (or (appkit-app-p owner) (appkit-view-p owner))
+        (appkit--set-owner-handles
+         owner (delq handle (appkit--owner-handles owner)))))
+    t))
+
 (defun appkit-cancel-handle (handle)
   "Cancel HANDLE exactly once."
   (when (and (appkit-handle-p handle) (appkit-handle-alive-p handle))
