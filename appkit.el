@@ -36,6 +36,7 @@
 (require 'appkit-mode-line)
 (require 'appkit-chat-avatar)
 (require 'appkit-chat-ins)
+(require 'appkit-discussion)
 
 (provide 'appkit)
 
