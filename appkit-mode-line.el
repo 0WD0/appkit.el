@@ -21,9 +21,13 @@
   (setq mode-line-misc-info (delete provider mode-line-misc-info)))
 
 (defun appkit-mode-line-update-cache (cache-symbol format)
-  "Set CACHE-SYMBOL to formatted mode-line FORMAT and redraw all mode lines."
+  "Set CACHE-SYMBOL to formatted mode-line FORMAT and return its value.
+
+This function deliberately does not force a redisplay.  Runtime and network
+callbacks may update presentation state here, while Emacs consumes the new
+cache during its normal redisplay cycle.  Interactive commands that install or
+remove a provider may call `force-mode-line-update' at their command boundary."
   (set cache-symbol (format-mode-line format))
-  (force-mode-line-update t)
   (symbol-value cache-symbol))
 
 (cl-defun appkit-mode-line-indicator
