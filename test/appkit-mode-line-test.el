@@ -24,14 +24,17 @@
   (should-not (appkit-mode-line-indicator nil :prefix " ")))
 
 (ert-deftest appkit-mode-line-update-cache-formats-and-returns-value ()
-  (let ((appkit-mode-line-test--cache nil))
+  (let ((appkit-mode-line-test--cache nil)
+        (redisplays 0))
     (cl-letf (((symbol-function 'format-mode-line)
                (lambda (format) (should (equal '("ready") format)) "ready"))
-              ((symbol-function 'force-mode-line-update) #'ignore))
+              ((symbol-function 'force-mode-line-update)
+               (lambda (&rest _) (cl-incf redisplays))))
       (should (equal "ready"
                      (appkit-mode-line-update-cache
                       'appkit-mode-line-test--cache '("ready"))))
-      (should (equal "ready" appkit-mode-line-test--cache)))))
+      (should (equal "ready" appkit-mode-line-test--cache))
+      (should (zerop redisplays)))))
 
 (provide 'appkit-mode-line-test)
 
