@@ -61,6 +61,47 @@
         (should (= runs 1))
         (should-not (appkit-view-handles view))))))
 
+(ert-deftest appkit-request-sync-invalidates-and-coalesces-atomically ()
+  (appkit-test-with-view
+    (let* ((view (appkit-current-view))
+           snapshots)
+      (setf (appkit-view-parts view) '(entries header)
+            (appkit-view-sync-function view)
+            (lambda (_view snapshot) (push snapshot snapshots)))
+      (let ((first
+             (appkit-request-sync
+              view :part 'entries :entry "m1" :delay 60))
+            (second
+             (appkit-request-sync
+              view :part 'header :entry "m2" :position t :delay 60)))
+        (should (eq first second))
+        (appkit-sync-invalidations view)
+        (should (= 1 (length snapshots)))
+        (let ((snapshot (car snapshots)))
+          (should (equal (sort (copy-sequence
+                                (appkit-invalidations-parts snapshot))
+                               (lambda (left right)
+                                 (string-lessp (symbol-name left)
+                                               (symbol-name right))))
+                         '(entries header)))
+          (should (equal (sort (copy-sequence
+                                (appkit-invalidations-entry-keys snapshot))
+                               #'string<)
+                         '("m1" "m2")))
+          (should (appkit-invalidations-position-p snapshot)))))))
+
+(ert-deftest appkit-request-sync-is-inert-for-dead-view ()
+  (appkit-test-with-view
+    (let ((view (appkit-current-view)))
+      (appkit-kill-view view)
+      (should-not (appkit-request-sync view :structure t)))))
+
+(ert-deftest appkit-request-sync-does-not-schedule-empty-work ()
+  (appkit-test-with-view
+    (let ((view (appkit-current-view)))
+      (should-not (appkit-request-sync view))
+      (should-not (appkit-view-handles view)))))
+
 (ert-deftest appkit-failed-sync-restores-invalidation-snapshot ()
   (appkit-test-with-view
     (let ((view (appkit-current-view)))

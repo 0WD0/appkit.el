@@ -486,8 +486,9 @@ miss that edit and leave canonical composer state stale."
 
 BEG, END, and OLD-LENGTH describe the change as in `after-change-functions'.
 When RENDERING-P is non-nil, do nothing.  Otherwise, if the change overlaps
-the current input region, normalize input text properties, optionally prune
-broken structured objects, and then call SYNC-FUNCTION when non-nil."
+the current input region, normalize input text properties, prune broken
+structured objects when PRUNE-BROKEN-OBJECTS is non-nil, and then call
+SYNC-FUNCTION when non-nil."
   (unless rendering-p
     (when-let* ((bounds (appkit-chatbuf-input-region-bounds)))
       (when (appkit-chatbuf--change-overlaps-input-p
@@ -565,16 +566,16 @@ The returned string includes the trailing boundary spacer used by
 the complete object span.  This pure constructor lets clients serialize and
 reorder objects without reimplementing Appkit's boundary contract."
   (unless (stringp content)
-    (user-error "appkit-chatbuf: input content must be a string"))
+    (user-error "Appkit chat buffer: input content must be a string"))
   (when (or (null object) (string-empty-p content))
-    (user-error "appkit-chatbuf: structured input objects need content and payload"))
+    (user-error "Appkit chat buffer: structured input objects need content and payload"))
   (dolist (property (list appkit-chatbuf-input-object-property
                           appkit-chatbuf-input-object-span-property
                           appkit-chatbuf-input-object-text-property
                           appkit-chatbuf-input-object-start-property
                           appkit-chatbuf-input-object-end-property))
     (when (plist-member properties property)
-      (user-error "appkit-chatbuf: %S is a reserved object property" property)))
+      (user-error "Appkit chat buffer: %S is a reserved object property" property)))
   (let* ((text (concat content " "))
          (span-id (make-symbol "appkit-chatbuf-input-object-span"))
          (body-end (1- (length text))))
@@ -621,9 +622,9 @@ The trailing spacer is what keeps following typed text (e.g. Chinese after an
 image) from inheriting the object property — default Emacs rear-stickiness
 would otherwise glue it into the attachment."
   (unless (stringp content)
-    (user-error "appkit-chatbuf: input content must be a string"))
+    (user-error "Appkit chat buffer: input content must be a string"))
   (when (and object (string-empty-p content))
-    (user-error "appkit-chatbuf: structured input objects need visible text"))
+    (user-error "Appkit chat buffer: structured input objects need visible text"))
   (appkit-chatbuf-init-state)
   (appkit-chatbuf--ensure-point-after-input-start)
   (when-let* ((input-start (appkit-chatbuf-input-start-position)))
@@ -892,7 +893,7 @@ properties instead of inspecting the live buffer contents."
 
 When INDEX is nil, restore pending input remembered before history navigation."
   (unless (ring-p appkit-chatbuf--input-ring)
-    (user-error "appkit-chatbuf: input history is unavailable"))
+    (user-error "Appkit chat buffer: input history is unavailable"))
   (unless appkit-chatbuf--input-idx
     (setq appkit-chatbuf--input-pending (or (appkit-chatbuf-input-string) "")))
   (setq appkit-chatbuf--input-idx index)
@@ -902,7 +903,7 @@ When INDEX is nil, restore pending input remembered before history navigation."
      (or appkit-chatbuf--input-pending "")
      :preserve-history-navigation-p t))
    ((or (< index 0) (>= index (ring-length appkit-chatbuf--input-ring)))
-    (user-error "appkit-chatbuf: history index %s is out of range" index))
+    (user-error "Appkit chat buffer: history index %s is out of range" index))
    (t
     (appkit-chatbuf-input-set-text
      (ring-ref appkit-chatbuf--input-ring index)
@@ -985,7 +986,7 @@ remembered pending latest input when navigation returns to the newest state."
         (plist-get result :value)
         :preserve-history-navigation-p t))
       (_
-       (user-error "appkit-chatbuf: input history is empty")))))
+       (user-error "Appkit chat buffer: input history is empty")))))
 
 (defun appkit-chatbuf-input-history-next (&optional n)
   "Replace input with N newer entries from input history."
@@ -997,7 +998,7 @@ remembered pending latest input when navigation returns to the newest state."
         (plist-get result :value)
         :preserve-history-navigation-p t))
       (_
-       (user-error "appkit-chatbuf: already at latest input")))))
+       (user-error "Appkit chat buffer: already at latest input")))))
 
 (provide 'appkit-chatbuf)
 

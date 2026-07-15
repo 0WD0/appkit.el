@@ -190,7 +190,9 @@ object, and start at a normal token boundary."
 
 (defun appkit-chat-completion--table-action
     (string pred action candidates category candidate-map)
-  "Serve completion table ACTION for STRING over CANDIDATES."
+  "Serve completion table ACTION for STRING over CANDIDATES.
+PRED optionally filters candidate labels.  CATEGORY and CANDIDATE-MAP carry
+the table metadata and exact label lookup."
   (pcase action
     ('metadata
      `(metadata
@@ -234,12 +236,17 @@ object, and start at a normal token boundary."
     ('lambda
      (and (stringp string)
           (let* ((plain (substring-no-properties string))
+                 (folded-plain
+                  (and appkit-chat-completion-ignore-case
+                       (downcase plain)))
                  (candidate
                   (if appkit-chat-completion-ignore-case
                       (seq-find
                        (lambda (item)
-                         (string-equal-ignore-case
-                          plain (appkit-chat-completion--candidate-label item)))
+                         (string-equal
+                          folded-plain
+                          (downcase
+                           (appkit-chat-completion--candidate-label item))))
                        candidates)
                     (gethash plain candidate-map))))
             (and candidate
@@ -376,8 +383,9 @@ SYNC-FUNCTION are forwarded to `appkit-chat-completion-apply-candidate'."
     (prompt candidates &key category history initial-input)
   "Read and return one item from CANDIDATES using shared rich metadata.
 
-Return the selected candidate object, not merely its label.  CATEGORY,
-HISTORY, and INITIAL-INPUT customize `completing-read'."
+PROMPT is the minibuffer prompt.  Return the selected candidate object, not
+merely its label.  CATEGORY, HISTORY, and INITIAL-INPUT customize
+`completing-read'."
   (unless candidates
     (user-error "No completion candidates"))
   (let* ((candidate-map (appkit-chat-completion--candidate-map candidates))

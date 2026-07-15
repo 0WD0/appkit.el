@@ -51,7 +51,10 @@
 
 (cl-defun appkit-invalidate
     (view &key structure part parts entry entries resource resources position)
-  "Mark stale projections in VIEW without mutating its buffer."
+  "Mark stale projections in VIEW without mutating its buffer.
+STRUCTURE marks the whole projection.  PART and PARTS name declared view
+regions; ENTRY and ENTRIES name stable domain entries; RESOURCE and RESOURCES
+name shared dependencies.  POSITION requests semantic position preservation."
   (unless (appkit-view-live-p view)
     (cl-return-from appkit-invalidate nil))
   (let* ((state (appkit-view-invalidations-ensure view))
@@ -127,6 +130,29 @@
           (setf (appkit-invalidations-scheduled-handle state) handle)))
       (appkit-handle-object
        (appkit-invalidations-scheduled-handle state)))))
+
+(cl-defun appkit-request-sync
+    (view &key structure part parts entry entries resource resources position
+          (delay 0))
+  "Invalidate stale projections and schedule one coalesced sync for VIEW.
+
+STRUCTURE, PART, PARTS, ENTRY, ENTRIES, RESOURCE, RESOURCES, and POSITION have
+the same meaning as in `appkit-invalidate'.  DELAY is forwarded to
+`appkit-schedule-sync'.  Return the owned timer object, or nil when VIEW is no
+longer live."
+  (when-let* ((state
+               (appkit-invalidate
+                view
+                :structure structure
+                :part part
+                :parts parts
+                :entry entry
+                :entries entries
+                :resource resource
+                :resources resources
+                :position position)))
+    (when (appkit-invalidations-any-p state)
+      (appkit-schedule-sync view :delay delay))))
 
 (defun appkit-sync-invalidations (view)
   "Synchronize VIEW from one coalesced invalidation snapshot."
