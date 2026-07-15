@@ -248,6 +248,37 @@
       (when (buffer-live-p buffer)
         (kill-buffer buffer)))))
 
+(ert-deftest appkit-open-view-disambiguates-live-foreign-fallback-name ()
+  (let ((app (appkit-start-app 'appkit-test :id 'account))
+        (buffer-name (generate-new-buffer-name " *appkit-shared-title*"))
+        first second first-buffer second-buffer)
+    (unwind-protect
+        (progn
+          (setq first
+                (appkit-open-view
+                 :app app :id 'first :mode 'appkit-test-mode
+                 :buffer-name buffer-name))
+          (setq second
+                (appkit-open-view
+                 :app app :id 'second :mode 'appkit-test-mode
+                 :buffer-name buffer-name))
+          (setq first-buffer (appkit-view-buffer first)
+                second-buffer (appkit-view-buffer second))
+          (should-not (eq first-buffer second-buffer))
+          (should (equal (buffer-name first-buffer) buffer-name))
+          (should (string-prefix-p buffer-name (buffer-name second-buffer)))
+          (should (appkit-view-live-p first))
+          (should (appkit-view-live-p second))
+          (with-current-buffer first-buffer
+            (should (eq (appkit-current-view) first)))
+          (with-current-buffer second-buffer
+            (should (eq (appkit-current-view) second))))
+      (appkit-stop-app app)
+      (dolist (buffer (list first-buffer second-buffer
+                            (get-buffer buffer-name)))
+        (when (buffer-live-p buffer)
+          (kill-buffer buffer))))))
+
 (ert-deftest appkit-open-view-rejects-live-fingerprint-with-different-name ()
   (let ((first-name (generate-new-buffer-name " *appkit-first-name*"))
         (second-name (generate-new-buffer-name " *appkit-second-name*"))
