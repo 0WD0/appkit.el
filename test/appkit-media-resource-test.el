@@ -4,6 +4,8 @@
 (require 'cl-lib)
 (require 'appkit-media-resource)
 
+(appkit-define-app-kind appkit-media-test)
+
 (ert-deftest appkit-media-resource-classifies-canonical-resources ()
   (should (equal "cat%20photo.PNG"
                  (appkit-media-url-filename
@@ -599,6 +601,344 @@
       (should (equal "appkit-media-video-player"
                      (plist-get process-properties :name)))
       (should (eq t (plist-get process-properties :noquery))))))
+
+(ert-deftest appkit-media-owned-video-player-stops-with-app ()
+  (let ((app (appkit-start-app 'appkit-media-test :id 'owned
+                               :shutdown #'ignore))
+        (appkit-media-video-player-command '("mpv"))
+        (live-p t)
+        deleted
+        sentinel)
+    (unwind-protect
+        (cl-letf (((symbol-function 'appkit-media-command-runnable-p)
+                   (lambda (_) t))
+                  ((symbol-function 'make-process)
+                   (lambda (&rest properties)
+                     (setq sentinel (plist-get properties :sentinel))
+                     :owned-player))
+                  ((symbol-function 'processp)
+                   (lambda (object) (eq object :owned-player)))
+                  ((symbol-function 'process-live-p)
+                   (lambda (object)
+                     (and (eq object :owned-player) live-p)))
+                  ((symbol-function 'set-process-filter) #'ignore)
+                  ((symbol-function 'set-process-sentinel) #'ignore)
+                  ((symbol-function 'delete-process)
+                   (lambda (process)
+                     (should (eq process :owned-player))
+                     (setq live-p nil deleted t)))
+                  ((symbol-function 'message) #'ignore))
+          (should
+           (eq :owned-player
+               (appkit-media-play-video-source
+                "https://example.invalid/owned.mp4" "test"
+                :owner app)))
+          (should (functionp sentinel))
+          (should (= 1 (length (appkit-app-handles app))))
+          (appkit-stop-app app)
+          (should deleted)
+          (should-not live-p)
+          (should-not (appkit-app-handles app)))
+      (when (appkit-app-live-p app)
+        (appkit-stop-app app)))))
+
+(ert-deftest appkit-media-owned-video-player-stops-with-view ()
+  (let ((app (appkit-start-app 'appkit-media-test :id 'view
+                               :shutdown #'ignore))
+        (buffer (generate-new-buffer " *appkit-media-view-owner*"))
+        (appkit-media-video-player-command '("mpv"))
+        (live-p t)
+        (delete-count 0)
+        view)
+    (unwind-protect
+        (progn
+          (with-current-buffer buffer
+            (setq view
+                  (appkit-attach-view
+                   :app app :id 'video :mode major-mode)))
+          (cl-letf (((symbol-function 'appkit-media-command-runnable-p)
+                     (lambda (_) t))
+                    ((symbol-function 'make-process)
+                     (lambda (&rest _properties) :view-player))
+                    ((symbol-function 'processp)
+                     (lambda (object) (eq object :view-player)))
+                    ((symbol-function 'process-live-p)
+                     (lambda (object)
+                       (and (eq object :view-player) live-p)))
+                    ((symbol-function 'set-process-filter) #'ignore)
+                    ((symbol-function 'set-process-sentinel) #'ignore)
+                    ((symbol-function 'delete-process)
+                     (lambda (process)
+                       (should (eq process :view-player))
+                       (setq live-p nil
+                             delete-count (1+ delete-count))))
+                    ((symbol-function 'message) #'ignore))
+            (should
+             (eq :view-player
+                 (appkit-media-play-video-source
+                  "https://example.invalid/view.mp4" "test" :owner view)))
+            (should (= 1 (length (appkit-view-handles view))))
+            (appkit-kill-view view)
+            (should (= delete-count 1))
+            (should-not live-p)
+            (should-not (appkit-view-handles view))
+            (should-not (appkit-view-live-p view))))
+      (when (appkit-app-live-p app)
+        (appkit-stop-app app))
+      (when (buffer-live-p buffer)
+        (kill-buffer buffer)))))
+
+(ert-deftest appkit-media-video-player-sync-terminal-spawn-retires-owner ()
+  (let ((app (appkit-start-app 'appkit-media-test :id 'sync-terminal
+                               :shutdown #'ignore))
+        (appkit-media-video-player-command '("mpv"))
+        (live-p t)
+        deleted)
+    (unwind-protect
+        (cl-letf (((symbol-function 'appkit-media-command-runnable-p)
+                   (lambda (_) t))
+                  ((symbol-function 'make-process)
+                   (lambda (&rest properties)
+                     (should (= 1 (length (appkit-app-handles app))))
+                     (setq live-p nil)
+                     (funcall (plist-get properties :sentinel)
+                              :sync-terminal-player "finished\n")
+                     :sync-terminal-player))
+                  ((symbol-function 'processp)
+                   (lambda (object) (eq object :sync-terminal-player)))
+                  ((symbol-function 'process-live-p)
+                   (lambda (object)
+                     (and (eq object :sync-terminal-player) live-p)))
+                  ((symbol-function 'process-status)
+                   (lambda (object)
+                     (should (eq object :sync-terminal-player))
+                     (if live-p 'run 'exit)))
+                  ((symbol-function 'set-process-filter) #'ignore)
+                  ((symbol-function 'set-process-sentinel) #'ignore)
+                  ((symbol-function 'delete-process)
+                   (lambda (_) (setq deleted t)))
+                  ((symbol-function 'message) #'ignore))
+          (should
+           (eq :sync-terminal-player
+               (appkit-media-play-video-source
+                "https://example.invalid/sync-terminal.mp4" "test"
+                :owner app)))
+          (should-not (appkit-app-handles app))
+          (appkit-stop-app app)
+          (should-not deleted))
+      (when (appkit-app-live-p app)
+        (appkit-stop-app app)))))
+
+(ert-deftest appkit-media-video-player-constructor-error-retires-owner ()
+  (let ((app (appkit-start-app 'appkit-media-test :id 'constructor-error
+                               :shutdown #'ignore))
+        (appkit-media-video-player-command '("mpv"))
+        (constructor-calls 0))
+    (unwind-protect
+        (cl-letf (((symbol-function 'appkit-media-command-runnable-p)
+                   (lambda (_) t))
+                  ((symbol-function 'make-process)
+                   (lambda (&rest _properties)
+                     (setq constructor-calls (1+ constructor-calls))
+                     (should (= 1 (length (appkit-app-handles app))))
+                     (error "player constructor failed"))))
+          (let ((condition
+                 (should-error
+                  (appkit-media-play-video-source
+                   "https://example.invalid/constructor-error.mp4" "test"
+                   :owner app))))
+            (should (equal (error-message-string condition)
+                           "player constructor failed")))
+          (should (= constructor-calls 1))
+          (should-not (appkit-app-handles app)))
+      (when (appkit-app-live-p app)
+        (appkit-stop-app app)))))
+
+(ert-deftest appkit-media-video-player-constructor-throw-retires-owner ()
+  (let ((app (appkit-start-app 'appkit-media-test :id 'constructor-throw
+                               :shutdown #'ignore))
+        (appkit-media-video-player-command '("mpv"))
+        (constructor-calls 0))
+    (unwind-protect
+        (cl-letf (((symbol-function 'appkit-media-command-runnable-p)
+                   (lambda (_) t))
+                  ((symbol-function 'make-process)
+                   (lambda (&rest _properties)
+                     (setq constructor-calls (1+ constructor-calls))
+                     (should (= 1 (length (appkit-app-handles app))))
+                     (throw 'appkit-media-constructor-exit :escaped))))
+          (should
+           (eq :escaped
+               (catch 'appkit-media-constructor-exit
+                 (appkit-media-play-video-source
+                  "https://example.invalid/constructor-throw.mp4" "test"
+                  :owner app)
+                 :returned)))
+          (should (= constructor-calls 1))
+          (should-not (appkit-app-handles app)))
+      (when (appkit-app-live-p app)
+        (appkit-stop-app app)))))
+
+(ert-deftest appkit-media-video-player-nonterminal-sentinel-keeps-owner ()
+  (let ((app (appkit-start-app 'appkit-media-test :id 'nonterminal
+                               :shutdown #'ignore))
+        (appkit-media-video-player-command '("mpv"))
+        (live-p t)
+        (delete-count 0)
+        sentinel)
+    (unwind-protect
+        (cl-letf (((symbol-function 'appkit-media-command-runnable-p)
+                   (lambda (_) t))
+                  ((symbol-function 'make-process)
+                   (lambda (&rest properties)
+                     (setq sentinel (plist-get properties :sentinel))
+                     :nonterminal-player))
+                  ((symbol-function 'processp)
+                   (lambda (object) (eq object :nonterminal-player)))
+                  ((symbol-function 'process-live-p)
+                   (lambda (object)
+                     (and (eq object :nonterminal-player) live-p)))
+                  ((symbol-function 'process-status)
+                   (lambda (object)
+                     (should (eq object :nonterminal-player))
+                     (if live-p 'stop 'exit)))
+                  ((symbol-function 'set-process-filter) #'ignore)
+                  ((symbol-function 'set-process-sentinel) #'ignore)
+                  ((symbol-function 'delete-process)
+                   (lambda (process)
+                     (should (eq process :nonterminal-player))
+                     (setq live-p nil
+                           delete-count (1+ delete-count))))
+                  ((symbol-function 'message) #'ignore))
+          (appkit-media-play-video-source
+           "https://example.invalid/nonterminal.mp4" "test" :owner app)
+          (should (= 1 (length (appkit-app-handles app))))
+          (funcall sentinel :nonterminal-player "stopped\n")
+          (should (= 1 (length (appkit-app-handles app))))
+          (should live-p)
+          (appkit-stop-app app)
+          (should (= delete-count 1))
+          (should-not live-p))
+      (when (appkit-app-live-p app)
+        (appkit-stop-app app)))))
+
+(ert-deftest appkit-media-video-player-natural-exit-retires-owner ()
+  (let ((app (appkit-start-app 'appkit-media-test :id 'natural
+                               :shutdown #'ignore))
+        (appkit-media-video-player-command '("mpv"))
+        (live-p t)
+        deleted
+        sentinel)
+    (unwind-protect
+        (cl-letf (((symbol-function 'appkit-media-command-runnable-p)
+                   (lambda (_) t))
+                  ((symbol-function 'make-process)
+                   (lambda (&rest properties)
+                     (setq sentinel (plist-get properties :sentinel))
+                     :natural-player))
+                  ((symbol-function 'processp)
+                   (lambda (object) (eq object :natural-player)))
+                  ((symbol-function 'process-live-p)
+                   (lambda (object)
+                     (and (eq object :natural-player) live-p)))
+                  ((symbol-function 'set-process-filter) #'ignore)
+                  ((symbol-function 'set-process-sentinel) #'ignore)
+                  ((symbol-function 'delete-process)
+                   (lambda (_) (setq deleted t)))
+                  ((symbol-function 'message) #'ignore))
+          (appkit-media-play-video-source
+           "https://example.invalid/natural.mp4" "test" :owner app)
+          (should (= 1 (length (appkit-app-handles app))))
+          (setq live-p nil)
+          (funcall sentinel :natural-player "finished\n")
+          (should-not (appkit-app-handles app))
+          (should-not deleted))
+      (when (appkit-app-live-p app)
+        (appkit-stop-app app)))))
+
+(ert-deftest appkit-media-video-player-stop-during-spawn-cancels-returned-process ()
+  (let ((app (appkit-start-app 'appkit-media-test :id 'reentrant
+                               :shutdown #'ignore))
+        (appkit-media-video-player-command '("mpv"))
+        (live-p t)
+        deleted)
+    (cl-letf (((symbol-function 'appkit-media-command-runnable-p)
+               (lambda (_) t))
+              ((symbol-function 'make-process)
+               (lambda (&rest _)
+                 (appkit-stop-app app)
+                 :late-player))
+              ((symbol-function 'processp)
+               (lambda (object) (eq object :late-player)))
+              ((symbol-function 'process-live-p)
+               (lambda (object) (and (eq object :late-player) live-p)))
+              ((symbol-function 'set-process-filter) #'ignore)
+              ((symbol-function 'set-process-sentinel) #'ignore)
+              ((symbol-function 'delete-process)
+               (lambda (process)
+                 (should (eq process :late-player))
+                 (setq live-p nil deleted t)))
+              ((symbol-function 'message) #'ignore))
+      (should
+       (eq :late-player
+           (appkit-media-play-video-source
+            "https://example.invalid/late.mp4" "test" :owner app)))
+      (should deleted)
+      (should-not live-p)
+      (should-not (appkit-app-handles app)))))
+
+(ert-deftest appkit-media-video-player-dead-owner-never-spawns ()
+  (let ((app (appkit-start-app 'appkit-media-test :id 'dead
+                               :shutdown #'ignore))
+        (appkit-media-video-player-command '("mpv"))
+        spawned)
+    (appkit-stop-app app)
+    (cl-letf (((symbol-function 'appkit-media-command-runnable-p)
+               (lambda (_) t))
+              ((symbol-function 'make-process)
+               (lambda (&rest _)
+                 (setq spawned t)
+                 :impossible)))
+      (should-error
+       (appkit-media-play-video-source
+        "https://example.invalid/dead.mp4" "test" :owner app))
+      (should-not spawned))))
+
+(ert-deftest appkit-media-video-entrypoints-forward-exact-owner ()
+  (let ((app (appkit-start-app 'appkit-media-test :id 'forward
+                               :shutdown #'ignore))
+        calls)
+    (unwind-protect
+        (cl-letf (((symbol-function 'appkit-media-play-video-source)
+                   (lambda (source &optional label &rest keys)
+                     (push (list source label (plist-get keys :owner)) calls)
+                     :played)))
+          (should
+           (eq :played
+               (appkit-media-play-video-url
+                "https://example.invalid/url.mp4" "url" :owner app)))
+          (should
+           (eq :played
+               (appkit-media-open-resource
+                '((url . "https://example.invalid/resource.mp4"))
+                :kind 'video :client-label "resource" :owner app)))
+          (with-temp-buffer
+            (insert "video")
+            (appkit-media-add-play-video-properties
+             (point-min) (point-max) "https://example.invalid/action.mp4"
+             "action" :owner app)
+            (let* ((map (get-text-property (point-min) 'keymap))
+                   (command (lookup-key map (kbd "RET"))))
+              (should (commandp command))
+              (funcall command)))
+          (should
+           (equal
+            (nreverse calls)
+            `(("https://example.invalid/url.mp4" "url" ,app)
+              ("https://example.invalid/resource.mp4" "resource" ,app)
+              ("https://example.invalid/action.mp4" "action" ,app)))))
+      (when (appkit-app-live-p app)
+        (appkit-stop-app app)))))
 
 (ert-deftest appkit-media-video-player-errors-are-explicit ()
   (let ((appkit-media-video-player-command nil))

@@ -16,6 +16,7 @@
 (require 'plz)
 (require 'seq)
 (require 'subr-x)
+(require 'appkit-core)
 (require 'appkit-media-card)
 (require 'appkit-media-image)
 
@@ -244,10 +245,26 @@ The only valid results are `image', `video', and `file'."
               (program (car arguments)))
     (file-name-nondirectory program)))
 
-(defun appkit-media-play-video-source (source &optional client-label)
+(defun appkit-media--stop-player-process (process)
+  "Stop external player PROCESS without allowing its sentinel to run."
+  (when (processp process)
+    (set-process-filter process nil)
+    (set-process-sentinel process nil)
+    (when (process-live-p process)
+      (delete-process process))))
+
+(defun appkit-media--cancel-player-owner (state)
+  "Cancel the pending or running player described by mutable STATE."
+  (setf (plist-get state :cancelled-p) t)
+  (when-let* ((process (plist-get state :process)))
+    (appkit-media--stop-player-process process)))
+
+(cl-defun appkit-media-play-video-source
+    (source &optional client-label &key owner)
   "Play local file or URL SOURCE with the configured video player.
 
-CLIENT-LABEL identifies the application in user-facing messages."
+CLIENT-LABEL identifies the application in user-facing messages.  When OWNER
+is a live Appkit app or view, its lifecycle owns the external player process."
   (let ((label (or client-label "media")))
     (unless (appkit-media-url-present-p source)
       (user-error "%s: video has no playable source" label))
@@ -259,26 +276,62 @@ CLIENT-LABEL identifies the application in user-facing messages."
         (user-error
          "%s: video player is unavailable; customize `appkit-media-video-player-command'"
          label))
-      (let ((process
-             (make-process
-              :name "appkit-media-video-player"
-              :buffer nil
-              :command (cons program args)
-              :noquery t)))
+      (let* ((state (list :process nil :cancelled-p nil))
+             (handle
+              (and owner
+                   (appkit-register-handle
+                    owner 'process state #'appkit-media--cancel-player-owner)))
+             process
+             constructor-returned-p)
+        (unwind-protect
+            (progn
+              (setq process
+                    (make-process
+                     :name "appkit-media-video-player"
+                     :buffer nil
+                     :command (cons program args)
+                     :noquery t
+                     :sentinel
+                     (lambda (sentinel-process _event)
+                       (when (and handle
+                                  (appkit-handle-alive-p handle)
+                                  (not (process-live-p sentinel-process)))
+                         (appkit-retire-handle handle)))))
+              (setq constructor-returned-p t))
+          (unless constructor-returned-p
+            (when (and handle (appkit-handle-alive-p handle))
+              (appkit-retire-handle handle))))
+        (when handle
+          (unless (processp process)
+            (when (appkit-handle-alive-p handle)
+              (appkit-retire-handle handle))
+            (error "%s: video player did not return a process" label))
+          (setf (plist-get state :process) process)
+          ;; A very short-lived player may terminate during `make-process'
+          ;; without its sentinel running before the constructor returns.
+          (when (and (appkit-handle-alive-p handle)
+                     (not (process-live-p process)))
+            (appkit-retire-handle handle))
+          ;; OWNER may have stopped synchronously from inside `make-process'.
+          ;; Its pending cancellation must also stop the late returned player.
+          (when (plist-get state :cancelled-p)
+            (appkit-media--stop-player-process process)))
         (message "%s: playing video with %s"
                  label (file-name-nondirectory program))
         process))))
 
-(defun appkit-media-play-video-url (url &optional client-label)
-  "Play video URL using the player identified by CLIENT-LABEL."
-  (appkit-media-play-video-source url client-label))
+(cl-defun appkit-media-play-video-url
+    (url &optional client-label &key owner)
+  "Play video URL for CLIENT-LABEL, optionally lifecycle-owned by OWNER."
+  (appkit-media-play-video-source url client-label :owner owner))
 
-(defun appkit-media-play-video-file (path &optional client-label)
-  "Play PATH using the player identified by CLIENT-LABEL."
+(cl-defun appkit-media-play-video-file
+    (path &optional client-label &key owner)
+  "Play PATH for CLIENT-LABEL, optionally lifecycle-owned by OWNER."
   (unless (appkit-media-file-present-p path)
     (user-error "%s: local video file does not exist: %s"
                 (or client-label "media") path))
-  (appkit-media-play-video-source path client-label))
+  (appkit-media-play-video-source path client-label :owner owner))
 
 (defun appkit-media--maybe-start-gif-animation (file)
   "Start GIF animation for FILE when its `image-mode' buffer is idle."
@@ -339,15 +392,19 @@ CACHE-DIRECTORY, CACHE-UPDATE-FUNCTION, and CLIENT-LABEL are forwarded to
           :client-label client-label))
        "Open image in Emacs"))))
 
-(defun appkit-media-add-play-video-properties
-    (start end video-source &optional client-label)
-  "Attach handlers to play VIDEO-SOURCE between START and END."
+(cl-defun appkit-media-add-play-video-properties
+    (start end video-source &optional client-label &key owner)
+  "Attach a video action between START and END.
+
+VIDEO-SOURCE and CLIENT-LABEL are forwarded to the player.  When non-nil,
+OWNER is captured exactly and owns the external player lifecycle."
   (when (and (appkit-media-url-present-p video-source)
              (< start end))
     (appkit-media-add-action-properties
      start end
      (lambda ()
-       (appkit-media-play-video-source video-source client-label))
+       (appkit-media-play-video-source
+        video-source client-label :owner owner))
      (format "Play video: %s" video-source))))
 
 (defun appkit-media--open-cache-file-base (directory key)
@@ -792,14 +849,15 @@ Pass its path to CALLBACK, or a reason to ERRBACK."
 
 (cl-defun appkit-media-open-resource
     (resource &key kind cache-key cache-directory cache-update-function
-              (client-label "media"))
+              (client-label "media") owner)
   "Open canonical RESOURCE according to semantic KIND without a browser.
 
 Images are cached and opened inside Emacs, videos use
 `appkit-media-video-player-command', and other remote files are cached
 asynchronously before opening.  Remote resources require CACHE-DIRECTORY.
 CACHE-KEY identifies the entry.  CACHE-UPDATE-FUNCTION receives a copy after
-it becomes local, and CLIENT-LABEL prefixes user-facing messages."
+it becomes local, CLIENT-LABEL prefixes user-facing messages, and OWNER may
+bind an external video player to a live Appkit app or view."
   (let* ((resource (appkit-media-resource-normalize resource))
          (kind (appkit-media-resource-kind resource kind))
          (file (alist-get 'file resource))
@@ -821,7 +879,7 @@ it becomes local, and CLIENT-LABEL prefixes user-facing messages."
            (t
             (user-error "%s: video resource has neither local file nor URL"
                         client-label)))
-          client-label))
+          client-label :owner owner))
         ('image
          (if (appkit-media-file-present-p file)
              (open-local file)

@@ -490,6 +490,27 @@
       (should (eq cancelled 'owned))
       (should-not (appkit-view-live-p view)))))
 
+(ert-deftest appkit-retire-handle-forgets-owner-without-cancelling ()
+  (let ((app (appkit-start-app 'appkit-test :id 'retire :shutdown #'ignore))
+        cancellations
+        handle)
+    (unwind-protect
+        (progn
+          (setq handle
+                (appkit-register-handle
+                 app 'test 'owned
+                 (lambda (object) (push object cancellations))))
+          (should (memq handle (appkit-app-handles app)))
+          (should (appkit-retire-handle handle))
+          (should-not (appkit-handle-alive-p handle))
+          (should-not (appkit-app-handles app))
+          (should-not cancellations)
+          (should-not (appkit-retire-handle handle))
+          (appkit-stop-app app)
+          (should-not cancellations))
+      (when (appkit-app-live-p app)
+        (appkit-stop-app app)))))
+
 (ert-deftest appkit-view-kill-finishes-lifecycle-cleanup-after-handle-quit ()
   (appkit-test-with-view
     (let* ((view (appkit-current-view))
