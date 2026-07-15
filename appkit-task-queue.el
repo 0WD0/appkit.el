@@ -180,16 +180,6 @@ waiting."
    ((functionp object) (funcall object))
    (t (error "Unsupported appkit task cancellation object: %S" object))))
 
-(defun appkit-task-queue--retire-handle (handle)
-  "Retire lifecycle HANDLE without invoking its cancellation side effect."
-  (when (and (appkit-handle-p handle) (appkit-handle-alive-p handle))
-    (setf (appkit-handle-alive-p handle) nil)
-    (let ((owner (appkit-handle-owner handle)))
-      (when (or (appkit-app-p owner) (appkit-view-p owner))
-        (appkit--set-owner-handles
-         owner (delq handle (appkit--owner-handles owner)))))
-    t))
-
 (defun appkit-task-queue--warn-secondary-error (context error-data)
   "Display a warning for secondary ERROR-DATA arising in CONTEXT."
   (display-warning
@@ -269,7 +259,7 @@ waiting."
                              ;; unusual reentrant code outside this callback.
                              ((eq (appkit-task-queue--task-state task)
                                   'finished)
-                              (appkit-task-queue--retire-handle cancellation)))
+                              (appkit-retire-handle cancellation)))
                             ;; Mark START returned before delivering a deferred
                             ;; synchronous completion.  Its finisher may signal,
                             ;; but the returned cancellation is now known and
@@ -322,7 +312,7 @@ waiting."
           pump-attempted-p)
       ;; Retire before FINISH so duplicate and reentrant callbacks are inert.
       (appkit-task-queue--retire-active queue task 'finished)
-      (appkit-task-queue--retire-handle cancellation)
+      (appkit-retire-handle cancellation)
       (unwind-protect
           (progn
             (condition-case err
