@@ -109,7 +109,9 @@ different live view.  Reopening a still-live view skips replacement setup and
 therefore preserves drafts, history windows, and request ownership.
 Fingerprint matches are unique: conflicting live owners or ambiguous detached
 buffers are rejected, and stale registry views are reaped with their owned
-handles before a new attachment is created.
+handles before a new attachment is created.  Distinct fingerprints may request
+the same fallback display name; Appkit gives the later buffer a normal unique
+name instead of treating a title collision as an identity collision.
 
 Generated structural edits are undo-free; the editable tail composer keeps
 normal Emacs undo behavior.

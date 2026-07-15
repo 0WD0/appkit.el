@@ -310,15 +310,15 @@ any other live buffer with the same fingerprint is a collision."
 (defun appkit--fallback-buffer-for-view (app id buffer-name)
   "Return a safe fallback buffer named BUFFER-NAME for APP's view ID.
 
-A detached buffer carrying another view's persistent fingerprint remains that
-view's property even when it happens to have the requested fallback name."
+A buffer carrying another view's persistent fingerprint remains that view's
+property even when it happens to have the requested fallback name.  Allocate a
+unique presentation name whether that foreign view is live or detached."
   (let ((named (get-buffer buffer-name))
         (fingerprint (appkit--view-fingerprint-for app id)))
     (if (and named
              (with-current-buffer named
                (and appkit--view-fingerprint
-                    (not (equal appkit--view-fingerprint fingerprint))
-                    (not (appkit-view-live-p appkit--current-view)))))
+                    (not (equal appkit--view-fingerprint fingerprint)))))
         (generate-new-buffer buffer-name)
       (get-buffer-create buffer-name))))
 
