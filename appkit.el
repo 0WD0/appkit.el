@@ -37,6 +37,7 @@
 (require 'appkit-chat-avatar)
 (require 'appkit-chat-ins)
 (require 'appkit-discussion)
+(require 'appkit-directory)
 
 (provide 'appkit)
 
