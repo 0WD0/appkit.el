@@ -12,8 +12,8 @@
 - a persistent chat composer, shared rich completion substrate, projected
   Unicode emoji completion, continuous history-window state, and keyed chat
   timeline projection
-- reusable prefix, one-line/list-view, mode-line, two-line avatar, and
-  threaded-discussion geometry
+- reusable prefix, one-line/list-view, mode-line, two-line avatar,
+  threaded-discussion, and sectioned-directory geometry
 - browser-free media resources, inline image/video previews, and media actions
 
 Application state, protocol adaptation, and client branding stay in the
@@ -58,8 +58,8 @@ developed together:
 No consumer compatibility aliases are provided.  Shared code uses the
 `appkit-task-queue-*`, `appkit-chatbuf-*`, `appkit-chat-history-*`,
 `appkit-chat-timeline-*`, `appkit-ui-*`, `appkit-view-*`,
-`appkit-chat-completion-*`, `appkit-chat-ins-*`, `appkit-discussion-*`, and
-`appkit-media-*` namespaces directly.
+`appkit-chat-completion-*`, `appkit-chat-ins-*`, `appkit-discussion-*`,
+`appkit-directory-*`, and `appkit-media-*` namespaces directly.
 
 The shared task queue deduplicates equal keys across active and waiting work,
 starts tasks in FIFO order up to a live adjustable limit, and guards every
