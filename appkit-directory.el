@@ -5,7 +5,9 @@
 ;; A protocol-neutral, non-recursive directory surface.  Applications project
 ;; their domain hierarchy into a visible flat stream of sections, groups,
 ;; items, notes, and spacers.  Appkit owns stable reconciliation, fold state,
-;; semantic position, exact row activation, and item navigation.
+;; semantic position, exact row activation, and item navigation.  Every item
+;; belongs to a section; its group key is optional so sections may own items
+;; directly as well as through a full section/group/item path.
 
 ;;; Code:
 
@@ -67,6 +69,7 @@
   ewoc
   node-table
   fold-state
+  entry-inserter
   item-inserter
   activate-function
   fold-function
@@ -80,14 +83,29 @@
   (make-symbol "appkit-directory-missing-fold-state")
   "Sentinel distinguishing a missing fold override from nil.")
 
+(defun appkit-directory-current-surface ()
+  "Return the current buffer's directory surface, or nil when unowned."
+  (and (appkit-directory-surface-p appkit-directory--surface)
+       appkit-directory--surface))
+
 (defun appkit-directory-surface ()
   "Return the current buffer's initialized directory surface."
-  (or (and (appkit-directory-surface-p appkit-directory--surface)
-           appkit-directory--surface)
+  (or (appkit-directory-current-surface)
       (error "Appkit directory surface is not initialized")))
+
+(defun appkit-directory-retire ()
+  "Retire the current buffer's directory surface and return its fold state.
+
+This only releases buffer ownership; applications remain responsible for
+replacing or clearing presentation state before installing another renderer.
+Return nil when the current buffer has no directory surface."
+  (when-let* ((surface (appkit-directory-current-surface)))
+    (setq-local appkit-directory--surface nil)
+    (appkit-directory-surface-fold-state surface)))
 
 (cl-defun appkit-directory-configure
     (surface &key
+             (entry-inserter nil entry-inserter-p)
              (item-inserter nil item-inserter-p)
              (activate-function nil activate-function-p)
              (fold-function nil fold-function-p)
@@ -95,21 +113,29 @@
              (anchor-property nil anchor-property-p))
   "Configure adapter callbacks and position ownership for SURFACE.
 
-ITEM-INSERTER receives SURFACE and one item ENTRY and must insert exactly one
-newline-terminated physical row after Appkit has inserted indentation and an
-optional fold marker.  ACTIVATE-FUNCTION receives SURFACE and an activated
-non-fold item.  FOLD-FUNCTION receives SURFACE, the fold entry, and its new
-expanded state.  ACTION-ROWS-P opts into whole-row text buttons; ordinary
-directory modes dispatch through their mode map.  ANCHOR-PROPERTY defaults to
+ENTRY-INSERTER receives SURFACE and every non-spacer ENTRY after Appkit has
+inserted indentation and an optional fold marker.  A non-nil return value
+means that it handled the entry by inserting exactly one newline-terminated
+physical row.  A nil return value falls through to ITEM-INSERTER for item
+entries, or to Appkit's default label renderer otherwise.  ITEM-INSERTER also
+receives SURFACE and one item ENTRY and must insert exactly one terminated
+physical row.  ACTIVATE-FUNCTION receives SURFACE and an activated non-fold
+item.  FOLD-FUNCTION receives SURFACE, the fold entry, and its new expanded
+state.  ACTION-ROWS-P opts into whole-row text buttons; ordinary directory
+modes dispatch through their mode map.  ANCHOR-PROPERTY defaults to
 `appkit-directory-key-property'."
   (unless (appkit-directory-surface-p surface)
     (error "Appkit directory configuration requires a surface"))
-  (dolist (pair `((item-inserter . ,(and item-inserter-p item-inserter))
+  (dolist (pair `((entry-inserter
+                   . ,(and entry-inserter-p entry-inserter))
+                  (item-inserter . ,(and item-inserter-p item-inserter))
                   (activate-function
                    . ,(and activate-function-p activate-function))
                   (fold-function . ,(and fold-function-p fold-function))))
     (when (and (cdr pair) (not (functionp (cdr pair))))
       (error "Appkit directory %s is not callable" (car pair))))
+  (when entry-inserter-p
+    (setf (appkit-directory-surface-entry-inserter surface) entry-inserter))
   (when item-inserter-p
     (setf (appkit-directory-surface-item-inserter surface) item-inserter))
   (when activate-function-p
@@ -128,12 +154,18 @@ directory modes dispatch through their mode map.  ANCHOR-PROPERTY defaults to
           anchor-property))
   surface)
 
-(defun appkit-directory-initialize ()
-  "Initialize and return a fresh directory surface in the current buffer."
+(cl-defun appkit-directory-initialize (&key fold-state)
+  "Initialize and return a fresh directory surface in the current buffer.
+
+FOLD-STATE may be an existing hash table whose overrides should be shared by
+the new surface.  This lets an application rebuild or replace its directory
+layout without discarding the user's fold choices."
+  (when (and fold-state (not (hash-table-p fold-state)))
+    (error "Appkit directory fold-state must be a hash table"))
   (let ((surface
          (appkit-directory-surface--create
           :node-table (make-hash-table :test #'equal)
-          :fold-state (make-hash-table :test #'equal)
+          :fold-state (or fold-state (make-hash-table :test #'equal))
           :action-rows-p nil
           :anchor-property appkit-directory-key-property)))
     (let ((inhibit-read-only t)
@@ -201,9 +233,8 @@ the result true without mutating the user's stored fold override."
      (when (appkit-directory-entry-group-key entry)
        (error "Appkit directory group cannot own itself")))
     ('item
-     (unless (and (appkit-directory-entry-section-key entry)
-                  (appkit-directory-entry-group-key entry))
-       (error "Appkit directory item has an incomplete semantic path")))
+     (unless (appkit-directory-entry-section-key entry)
+       (error "Appkit directory item has no owning section")))
     ('spacer
      (when (or (appkit-directory-entry-section-key entry)
                (appkit-directory-entry-group-key entry))
@@ -315,12 +346,17 @@ the result true without mutating the user's stored fold override."
        (insert (make-string indent ?\s))
        (when (appkit-directory-entry-foldable-p entry)
          (insert (if (appkit-directory-entry-expanded-p entry) "▾ " "▸ ")))
-       (if (and (eq (appkit-directory-entry-role entry) 'item)
-                (functionp
-                 (appkit-directory-surface-item-inserter surface)))
-           (funcall (appkit-directory-surface-item-inserter surface)
-                    surface entry)
-         (appkit-directory--insert-label-entry entry))))
+       (unless (and (functionp
+                     (appkit-directory-surface-entry-inserter surface))
+                    (funcall
+                     (appkit-directory-surface-entry-inserter surface)
+                     surface entry))
+         (if (and (eq (appkit-directory-entry-role entry) 'item)
+                  (functionp
+                   (appkit-directory-surface-item-inserter surface)))
+             (funcall (appkit-directory-surface-item-inserter surface)
+                      surface entry)
+           (appkit-directory--insert-label-entry entry)))))
     (unless (appkit-directory--single-row-p start (point))
       (error "Appkit directory adapter must render exactly one physical row"))
     (let ((properties (appkit-directory--entry-properties entry)))

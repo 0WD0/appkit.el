@@ -59,6 +59,85 @@
     (should (get-text-property
              (1- (point)) appkit-directory-unread-property))))
 
+(ert-deftest appkit-directory-entry-inserter-handles-any-entry-after-prefix ()
+  (appkit-directory-test--with-surface
+    (let (item-fallback-called)
+      (appkit-directory-configure
+       surface
+       :entry-inserter
+       (lambda (_surface entry)
+         (pcase (appkit-directory-entry-role entry)
+           ('section
+            (insert "Custom section\n")
+            t)
+           ('item
+            (insert "Handled\n")
+            t)))
+       :item-inserter
+       (lambda (&rest _arguments)
+         (setq item-fallback-called t)
+         (insert "Fallback\n")))
+      (appkit-directory-reconcile
+       surface
+       (list
+        (appkit-directory-entry-create
+         :key 'section :role 'section :label "Section")
+        (appkit-directory-entry-create
+         :key 'item :role 'item :section-key 'section :indent 2
+         :item-p t)))
+      (should (equal "Custom section\n  Handled\n" (buffer-string)))
+      (should-not item-fallback-called))))
+
+(ert-deftest appkit-directory-entry-inserter-nil-falls-back ()
+  (appkit-directory-test--with-surface
+    (let (seen)
+      (appkit-directory-configure
+       surface
+       :entry-inserter
+       (lambda (_surface entry)
+         (push (appkit-directory-entry-key entry) seen)
+         nil)
+       :item-inserter #'appkit-directory-test--item-inserter)
+      (appkit-directory-reconcile
+       surface
+       (list
+        (appkit-directory-entry-create
+         :key 'section :role 'section :label "Section")
+        (appkit-directory-entry-create
+         :key 'item :role 'item :section-key 'section :label "Item"
+         :item-p t)))
+      (should (equal "Section\nItem\n" (buffer-string)))
+      (should (equal '(item section) seen)))))
+
+(ert-deftest appkit-directory-entry-inserter-remains-single-row ()
+  (appkit-directory-test--with-surface
+    (appkit-directory-configure
+     surface
+     :entry-inserter
+     (lambda (&rest _arguments)
+       (insert "First\nSecond\n")
+       t))
+    (should-error
+     (appkit-directory-reconcile
+      surface
+      (list
+       (appkit-directory-entry-create
+        :key 'note :role 'note :label "Ignored"))))))
+
+(ert-deftest appkit-directory-item-may-belong-directly-to-section ()
+  (appkit-directory-test--with-surface
+    (let ((entry
+           (appkit-directory-entry-create
+            :key 'direct :role 'item :section-key 'section
+            :label "Direct" :item-p t)))
+      (appkit-directory-reconcile surface (list entry))
+      (should (equal "Direct\n" (buffer-string)))
+      (should (equal 'section
+                     (get-text-property
+                      (point-min) appkit-directory-section-property)))
+      (should-not
+       (get-text-property (point-min) appkit-directory-group-property)))))
+
 (ert-deftest appkit-directory-action-row-excludes-the-terminating-newline ()
   (appkit-directory-test--with-surface
     (appkit-directory-configure
@@ -89,6 +168,23 @@
       (should-not (appkit-directory-fold-expanded-p surface key t))
       (appkit-directory-clear-fold-state surface key)
       (should (appkit-directory-fold-expanded-p surface key t)))))
+
+(ert-deftest appkit-directory-initialize-can-reuse-fold-state ()
+  (with-temp-buffer
+    (should-not (appkit-directory-current-surface))
+    (let ((fold-state (make-hash-table :test #'equal)))
+      (puthash '(group . "stable") nil fold-state)
+      (let ((surface (appkit-directory-initialize :fold-state fold-state)))
+        (should (eq surface (appkit-directory-current-surface)))
+        (should (eq fold-state
+                    (appkit-directory-surface-fold-state surface)))
+        (should-not
+         (appkit-directory-fold-expanded-p
+          surface '(group . "stable") t))
+        (should (eq fold-state (appkit-directory-retire)))
+        (should-not (appkit-directory-current-surface))
+        (should-not (appkit-directory-retire))
+        (should-error (appkit-directory-surface))))))
 
 (ert-deftest appkit-directory-reconcile-retains-and-targets-ewoc-nodes ()
   (appkit-directory-test--with-surface
