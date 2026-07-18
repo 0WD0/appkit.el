@@ -15,4 +15,7 @@
 (depends-on "emacs" "27.1")
 (depends-on "plz" "0.8")
 
+(development
+ (depends-on "evil"))
+
 (script "test" "eask test ert test/*.el")
