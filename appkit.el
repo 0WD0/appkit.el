@@ -38,6 +38,7 @@
 (require 'appkit-chat-ins)
 (require 'appkit-discussion)
 (require 'appkit-directory)
+(require 'appkit-evil)
 
 (provide 'appkit)
 
