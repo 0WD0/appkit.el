@@ -140,6 +140,47 @@
              (lambda (&rest _) '(20 . 4.4))))
     (should (= 4 (appkit-media-image-slice-count '(image :type png))))))
 
+(ert-deftest appkit-media-image-slices-use-target-character-height ()
+  "Slice geometry never follows an unrelated selected window's line."
+  (with-temp-buffer
+    (let ((image '(image :type png :appkit-media-nslices 3))
+          slices)
+      (cl-letf (((symbol-function 'appkit-media-image-object-valid-p)
+                 (lambda (_image) nil))
+                ((symbol-function 'appkit-media--char-pixel-height)
+                 (lambda () 10))
+                ((symbol-function 'line-pixel-height)
+                 (lambda ()
+                   (ert-fail
+                    "slice insertion consulted the selected window")))
+                ((symbol-function 'insert-image)
+                 (lambda (_image alt &optional _area slice)
+                   (push slice slices)
+                   (insert alt))))
+        (appkit-media-insert-image-slices image nil nil "preview"))
+      (should (equal (nreverse slices)
+                     '((0 0 1.0 10) (0 10 1.0 10) (0 20 1.0 10)))))))
+
+(ert-deftest appkit-media-character-height-uses-target-buffer-window ()
+  (with-temp-buffer
+    (insert "render position")
+    (goto-char 4)
+    (let ((origin (point)))
+      (cl-letf (((symbol-function 'appkit-media--render-window)
+                 (lambda () 'target-window))
+                ((symbol-function 'window-font-height)
+                 (lambda (window face)
+                   (should (eq window 'target-window))
+                   (should (eq face 'default))
+                   ;; Some Emacs window font queries move point internally.
+                   (goto-char (point-max))
+                   24))
+                ((symbol-function 'line-pixel-height)
+                 (lambda ()
+                   (ert-fail "selected line height must not be consulted"))))
+        (should (= 24 (appkit-media--char-pixel-height)))
+        (should (= origin (point)))))))
+
 (ert-deftest appkit-media-insert-slice-newline-has-no-line-gap ()
   (with-temp-buffer
     (insert "first")
@@ -158,7 +199,8 @@
           slices)
       (cl-letf (((symbol-function 'appkit-media-image-object-valid-p)
                  (lambda (_image) nil))
-                ((symbol-function 'line-pixel-height) (lambda () 10))
+                ((symbol-function 'appkit-media--char-pixel-height)
+                 (lambda () 10))
                 ((symbol-function 'insert-image)
                  (lambda (_image alt &optional _area slice)
                    (push slice slices)
@@ -192,7 +234,8 @@
     (with-temp-buffer
       (cl-letf (((symbol-function 'appkit-media-image-object-valid-p)
                  (lambda (_image) nil))
-                ((symbol-function 'line-pixel-height) (lambda () 10))
+                ((symbol-function 'appkit-media--char-pixel-height)
+                 (lambda () 10))
                 ((symbol-function 'insert-image)
                  (lambda (image alt &optional _area _slice)
                    (push image occurrences)
@@ -245,7 +288,8 @@
     (unwind-protect
         (cl-letf (((symbol-function 'appkit-media-image-object-valid-p)
                    (lambda (_image) nil))
-                  ((symbol-function 'line-pixel-height) (lambda () 10))
+                  ((symbol-function 'appkit-media--char-pixel-height)
+                   (lambda () 10))
                   ((symbol-function 'insert-image)
                    (lambda (image alt &optional _area _slice)
                      (insert alt)
@@ -299,7 +343,8 @@
     (unwind-protect
         (cl-letf (((symbol-function 'appkit-media-image-object-valid-p)
                    (lambda (_image) nil))
-                  ((symbol-function 'line-pixel-height) (lambda () 10))
+                  ((symbol-function 'appkit-media--char-pixel-height)
+                   (lambda () 10))
                   ((symbol-function 'insert-image)
                    (lambda (image alt &optional _area _slice)
                      (setq occurrence image)
