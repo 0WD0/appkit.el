@@ -325,9 +325,10 @@ image's protocol alt text.  HELP-ECHO describes ACTION."
               (appkit-media--make-inline-animation-occurrence image)
             image))
          (slice-count (appkit-media-image-slice-count render-image))
-         (slice-height-pixels
-          (max 1 (or (ignore-errors (line-pixel-height))
-                     (frame-char-height))))
+         ;; Match the geometry used to create `:height Nch' previews.  Like
+         ;; telega's `telega-chars-xheight', this is a stable font metric for
+         ;; the target buffer, never the height of an arbitrary selected line.
+         (slice-height-pixels (appkit-media--char-pixel-height))
          (label (or fallback "[image]")))
     (dotimes (slice-index slice-count)
       (when (> slice-index 0)
@@ -350,9 +351,38 @@ image's protocol alt text.  HELP-ECHO describes ACTION."
   "Return the default character width in pixels for the current frame."
   (max 1 (frame-char-width)))
 
+(defun appkit-media--render-window ()
+  "Return the preferred live window displaying the current buffer."
+  (let* ((buffer (current-buffer))
+         (selected (selected-window)))
+    (cond
+     ((and (window-live-p selected)
+           (eq (window-buffer selected) buffer))
+      selected)
+     ((cl-find-if #'window-live-p
+                  (get-buffer-window-list buffer nil (selected-frame))))
+     ((cl-find-if #'window-live-p
+                  (get-buffer-window-list buffer nil 'visible)))
+     (t
+      (cl-find-if #'window-live-p
+                  (get-buffer-window-list buffer nil t))))))
+
 (defun appkit-media--char-pixel-height ()
-  "Return the default character height in pixels for the current frame."
-  (max 1 (frame-char-height)))
+  "Return the default character height for the current buffer in pixels.
+
+Use a window displaying the target buffer when possible.  This deliberately
+does not use `line-pixel-height': asynchronous rendering can run while the
+selected window displays an unrelated full-size image, making that function
+return the source image height instead of a character height."
+  (save-excursion
+    (let ((window (appkit-media--render-window)))
+      (max 1
+           (or (and window
+                    (ignore-errors
+                      (window-font-height window 'default)))
+               (ignore-errors (default-line-height))
+               (frame-char-height)
+               16)))))
 
 (defun appkit-media--pixels->chars-width (pixels)
   "Convert PIXELS to character columns using current frame metrics."
