@@ -56,6 +56,7 @@
   fold-default-expanded-p
   expanded-p
   fold-locked-reason
+  primary-action
   item-p
   unread-p
   payload
@@ -119,11 +120,11 @@ means that it handled the entry by inserting exactly one newline-terminated
 physical row.  A nil return value falls through to ITEM-INSERTER for item
 entries, or to Appkit's default label renderer otherwise.  ITEM-INSERTER also
 receives SURFACE and one item ENTRY and must insert exactly one terminated
-physical row.  ACTIVATE-FUNCTION receives SURFACE and an activated non-fold
-item.  FOLD-FUNCTION receives SURFACE, the fold entry, and its new expanded
-state.  ACTION-ROWS-P opts into whole-row text buttons; ordinary directory
-modes dispatch through their mode map.  ANCHOR-PROPERTY defaults to
-`appkit-directory-key-property'."
+physical row.  ACTIVATE-FUNCTION receives SURFACE and an item whose primary
+action is item activation.  FOLD-FUNCTION receives SURFACE, the fold entry,
+and its new expanded state.  ACTION-ROWS-P opts into whole-row text buttons;
+ordinary directory modes dispatch through their mode map.  ANCHOR-PROPERTY
+defaults to `appkit-directory-key-property'."
   (unless (appkit-directory-surface-p surface)
     (error "Appkit directory configuration requires a surface"))
   (dolist (pair `((entry-inserter
@@ -253,6 +254,17 @@ the result true without mutating the user's stored fold override."
       (error "Foldable Appkit directory entry has no fold key"))
     (unless (memq (appkit-directory-entry-expanded-p entry) '(nil t))
       (error "Foldable Appkit directory entry has invalid expanded state")))
+  (pcase (appkit-directory-entry-primary-action entry)
+    ('nil nil)
+    ('fold
+     (unless (appkit-directory-entry-foldable-p entry)
+       (error "Appkit directory fold primary action requires a foldable entry")))
+    ('item
+     (unless (appkit-directory-entry-item-p entry)
+       (error "Appkit directory item primary action requires a navigable item")))
+    (_
+     (error "Appkit directory entry has invalid primary action %S"
+            (appkit-directory-entry-primary-action entry))))
   (when (eq (appkit-directory-entry-role entry) 'spacer)
     (when (or (appkit-directory-entry-foldable-p entry)
               (appkit-directory-entry-item-p entry))
@@ -467,40 +479,56 @@ the destination position, or nil when no matching entry exists."
       (goto-char target))
     target))
 
+(defun appkit-directory-toggle-entry-fold (surface entry)
+  "Toggle foldable SURFACE ENTRY independently of its primary action."
+  (unless (appkit-directory-entry-foldable-p entry)
+    (user-error "Appkit directory entry is not foldable"))
+  (when-let* ((reason (appkit-directory-entry-fold-locked-reason entry)))
+    (user-error "%s" reason))
+  (let* ((fold-key (appkit-directory-entry-fold-key entry))
+         (fold-state (appkit-directory-surface-fold-state surface))
+         (old-override
+          (gethash fold-key fold-state
+                   appkit-directory--missing-fold-state))
+         (expanded
+          (not
+           (appkit-directory-fold-expanded-p
+            surface fold-key
+            (appkit-directory-entry-fold-default-expanded-p entry)))))
+    (appkit-directory-set-fold-expanded surface fold-key expanded)
+    (condition-case error-data
+        (when-let* ((function
+                     (appkit-directory-surface-fold-function surface)))
+          (funcall function surface entry expanded))
+      (error
+       (if (eq old-override appkit-directory--missing-fold-state)
+           (remhash fold-key fold-state)
+         (puthash fold-key old-override fold-state))
+       (signal (car error-data) (cdr error-data))))
+    expanded))
+
+(defun appkit-directory--entry-primary-action (entry)
+  "Return ENTRY's explicit or backwards-compatible primary action."
+  (or (appkit-directory-entry-primary-action entry)
+      (cond
+       ((appkit-directory-entry-foldable-p entry) 'fold)
+       ((appkit-directory-entry-item-p entry) 'item))))
+
 (defun appkit-directory-activate-entry (surface entry)
-  "Activate one current SURFACE ENTRY."
-  (cond
-   ((appkit-directory-entry-foldable-p entry)
-    (when-let* ((reason (appkit-directory-entry-fold-locked-reason entry)))
-      (user-error "%s" reason))
-    (let* ((fold-key (appkit-directory-entry-fold-key entry))
-           (fold-state (appkit-directory-surface-fold-state surface))
-           (old-override
-            (gethash fold-key fold-state
-                     appkit-directory--missing-fold-state))
-           (expanded
-            (not
-             (appkit-directory-fold-expanded-p
-              surface fold-key
-              (appkit-directory-entry-fold-default-expanded-p entry)))))
-      (appkit-directory-set-fold-expanded surface fold-key expanded)
-      (condition-case error-data
-          (when-let* ((function
-                       (appkit-directory-surface-fold-function surface)))
-            (funcall function surface entry expanded))
-        (error
-         (if (eq old-override appkit-directory--missing-fold-state)
-             (remhash fold-key fold-state)
-           (puthash fold-key old-override fold-state))
-         (signal (car error-data) (cdr error-data))))
-      expanded))
-   ((appkit-directory-entry-item-p entry)
-    (if-let* ((function
-               (appkit-directory-surface-activate-function surface)))
-        (funcall function surface entry)
-      (user-error "Appkit directory has no item activation adapter")))
-   (t
-    (user-error "No directory action at point"))))
+  "Run the primary action for one current SURFACE ENTRY.
+
+Foldable items may declare `item' as their `primary-action', allowing primary
+activation to remain independent from `appkit-directory-toggle-entry-fold'."
+  (pcase (appkit-directory--entry-primary-action entry)
+    ('fold
+     (appkit-directory-toggle-entry-fold surface entry))
+    ('item
+     (if-let* ((function
+                (appkit-directory-surface-activate-function surface)))
+         (funcall function surface entry)
+       (user-error "Appkit directory has no item activation adapter")))
+    (_
+     (user-error "No directory action at point"))))
 
 (defun appkit-directory-activate ()
   "Activate the row at point, or advance from a passive row."
@@ -518,7 +546,8 @@ the destination position, or nil when no matching entry exists."
   (interactive)
   (let ((entry (appkit-directory-entry-at-point)))
     (if (and entry (appkit-directory-entry-foldable-p entry))
-        (appkit-directory-activate-entry (appkit-directory-surface) entry)
+        (appkit-directory-toggle-entry-fold
+         (appkit-directory-surface) entry)
       (appkit-directory-next-item))))
 
 (defun appkit-directory-next-item ()
