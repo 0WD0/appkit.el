@@ -31,6 +31,7 @@
 (require 'appkit-chat-emoji)
 (require 'appkit-chat-timeline)
 (require 'appkit-media)
+(require 'appkit-name-color)
 (require 'appkit-ui)
 (require 'appkit-view)
 (require 'appkit-mode-line)
