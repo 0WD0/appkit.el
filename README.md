@@ -13,15 +13,17 @@
   Unicode emoji completion, continuous history-window state, and keyed chat
   timeline projection
 - reusable prefix, one-line/list-view, mode-line, two-line avatar,
-  threaded-discussion, and sectioned-directory geometry
+  threaded-discussion, sectioned-directory geometry, and deterministic
+  identity-keyed name coloring
 - optional Evil integration with state-specific directory bindings and a
   deferred binding helper for client packages, without a runtime dependency
 - browser-free media resources, inline image/video previews, and media actions
 
 Application state, protocol adaptation, and client branding stay in the
 client packages.  Appkit owns lifecycle/update mechanics and reusable
-presentation geometry; it does not define Discord, QQ, channel, or message
-models.
+presentation geometry, including an optional neutral name-color palette;
+clients still choose identity keys and self/system overrides.  Appkit does not
+define Discord, QQ, channel, or message models.
 
 The shared history controller owns exact buffer-local window edges,
 unknown/partial/loading and authoritative-empty state, opaque request
@@ -61,7 +63,8 @@ No consumer compatibility aliases are provided.  Shared code uses the
 `appkit-task-queue-*`, `appkit-chatbuf-*`, `appkit-chat-history-*`,
 `appkit-chat-timeline-*`, `appkit-ui-*`, `appkit-view-*`,
 `appkit-chat-completion-*`, `appkit-chat-ins-*`, `appkit-discussion-*`,
-`appkit-directory-*`, `appkit-evil-*`, and `appkit-media-*` namespaces directly.
+`appkit-directory-*`, `appkit-name-color-*`, `appkit-evil-*`, and
+`appkit-media-*` namespaces directly.
 
 The shared task queue deduplicates equal keys across active and waiting work,
 starts tasks in FIFO order up to a live adjustable limit, and guards every
