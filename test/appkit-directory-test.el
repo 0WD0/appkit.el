@@ -240,6 +240,37 @@
       (appkit-directory-activate)
       (should (equal folded '((section . "s") nil))))))
 
+(ert-deftest appkit-directory-foldable-item-separates-primary-activation-and-fold ()
+  (appkit-directory-test--with-surface
+    (let (activated folded)
+      (appkit-directory-configure
+       surface
+       :activate-function
+       (lambda (_surface entry)
+         (setq activated (appkit-directory-entry-payload entry)))
+       :fold-function
+       (lambda (_surface entry expanded-p)
+         (setq folded
+               (list (appkit-directory-entry-fold-key entry) expanded-p))))
+      (let* ((key '(channel . "general"))
+             (fold-key '(threads . "general"))
+             (entry
+              (appkit-directory-entry-create
+               :key key :role 'item :section-key 'channels
+               :item-p t :payload 'general
+               :foldable-p t :fold-key fold-key
+               :fold-default-expanded-p nil :expanded-p nil
+               :primary-action 'item)))
+        (appkit-directory-reconcile surface (list entry))
+        (goto-char (point-min))
+        (appkit-directory-activate)
+        (should (eq activated 'general))
+        (should-not folded)
+        (should-not (appkit-directory-fold-expanded-p surface fold-key nil))
+        (appkit-directory-tab-dwim)
+        (should (equal folded (list fold-key t)))
+        (should (appkit-directory-fold-expanded-p surface fold-key nil))))))
+
 (ert-deftest appkit-directory-next-unread-wraps-over-items-only ()
   (appkit-directory-test--with-surface
     (appkit-directory-configure
@@ -261,7 +292,7 @@
     (let ((entry (car (appkit-directory-test--entries t)))
           (key '(section . "s")))
       (should (appkit-directory-fold-expanded-p surface key t))
-      (should-error (appkit-directory-activate-entry surface entry))
+      (should-error (appkit-directory-toggle-entry-fold surface entry))
       (should (appkit-directory-fold-expanded-p surface key t)))))
 
 (ert-deftest appkit-directory-rejects-invalid-or-duplicate-projections ()
@@ -285,6 +316,22 @@
       surface
       (list (appkit-directory-entry-create
              :key "item" :role 'item :item-p t))))))
+
+(ert-deftest appkit-directory-rejects-invalid-primary-actions ()
+  (appkit-directory-test--with-surface
+    (should-error
+     (appkit-directory-reconcile
+      surface
+      (list
+       (appkit-directory-entry-create
+        :key "not-foldable" :role 'item :section-key 'section
+        :item-p t :primary-action 'fold))))
+    (should-error
+     (appkit-directory-reconcile
+      surface
+      (list
+       (appkit-directory-entry-create
+        :key "not-item" :role 'note :primary-action 'item))))))
 
 (provide 'appkit-directory-test)
 
