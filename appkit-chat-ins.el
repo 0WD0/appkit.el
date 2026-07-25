@@ -173,6 +173,105 @@ ACTION makes its content interactive, with HELP-ECHO as the description."
       (appkit-ui-append-face start (point) face))
     (cons start (point))))
 
+(defun appkit-chat-ins-format-duration (seconds)
+  "Format non-negative SECONDS as compact media duration text.
+
+The value is rounded down because playback progress describes elapsed time,
+not the next second.  Return \"--:--\" when SECONDS is not a finite
+non-negative number."
+  (if (and (numberp seconds)
+           (>= seconds 0)
+           (= seconds seconds))
+      (let* ((whole (truncate seconds))
+             (hours (/ whole 3600))
+             (minutes (% (/ whole 60) 60))
+             (seconds (% whole 60)))
+        (if (> hours 0)
+            (format "%d:%02d:%02d" hours minutes seconds)
+          (format "%d:%02d" minutes seconds)))
+    "--:--"))
+
+(defun appkit-chat-ins--voice-note-state-icon (state)
+  "Return the protocol-neutral control icon for voice-note STATE."
+  (pcase state
+    ('preparing "⋯")
+    ('playing "⏸")
+    ((or 'finished 'failed) "↻")
+    (_ "▶")))
+
+(defun appkit-chat-ins--voice-note-progress-bar
+    (played-seconds duration-seconds width)
+  "Return a WIDTH-column voice-note progress bar.
+
+PLAYED-SECONDS is clamped to DURATION-SECONDS.  Unknown or zero durations
+produce an empty track."
+  (let* ((width (max 1 (or width 12)))
+         (duration (and (numberp duration-seconds)
+                        (> duration-seconds 0)
+                        (float duration-seconds)))
+         (played (if (and duration (numberp played-seconds))
+                     (min duration (max 0.0 (float played-seconds)))
+                   0.0))
+         (filled (if duration
+                     (min width
+                          (max 0
+                               (round (* width (/ played duration)))))
+                   0)))
+    (concat (make-string filled ?━)
+            (make-string (- width filled) ?─))))
+
+(cl-defun appkit-chat-ins-voice-note-text
+    (&key state duration-seconds played-seconds status-text (bar-width 12))
+  "Return backend-neutral voice-note control text.
+
+STATE is one of `idle', `preparing', `playing', `paused', `finished', or
+`failed'.  DURATION-SECONDS and PLAYED-SECONDS describe playback progress.
+STATUS-TEXT is optional adapter-supplied presentation text.  BAR-WIDTH
+controls only the visual track width."
+  (unless (memq state '(nil idle preparing playing paused finished failed))
+    (error "Appkit voice-note state is invalid: %S" state))
+  (let* ((duration (and (numberp duration-seconds)
+                        (>= duration-seconds 0)
+                        duration-seconds))
+         (played
+          (cond
+           ((and (eq state 'finished) duration) duration)
+           ((and (numberp played-seconds) (>= played-seconds 0))
+            (if duration (min played-seconds duration) played-seconds))
+           (t 0)))
+         (base
+          (format "%s %s %s / %s"
+                  (appkit-chat-ins--voice-note-state-icon (or state 'idle))
+                  (appkit-chat-ins--voice-note-progress-bar
+                   played duration bar-width)
+                  (appkit-chat-ins-format-duration played)
+                  (appkit-chat-ins-format-duration duration))))
+    (if (and (stringp status-text) (not (string-empty-p status-text)))
+        (concat base "  " status-text)
+      base)))
+
+(cl-defun appkit-chat-ins-insert-voice-note
+    (&key state duration-seconds played-seconds status-text (bar-width 12)
+          prefix face properties action help-echo)
+  "Insert one protocol-neutral interactive voice-note control.
+
+The backend supplies semantic STATE, DURATION-SECONDS, PLAYED-SECONDS, and an
+ACTION.  Appkit owns the control icon, progress track, duration formatting,
+click target, prefix, and styling.  STATUS-TEXT is optional presentation text
+for states such as preparation or failure.  Return the inserted span."
+  (appkit-chat-ins-insert-prefixed-line
+   (appkit-chat-ins-voice-note-text
+    :state state
+    :duration-seconds duration-seconds
+    :played-seconds played-seconds
+    :status-text status-text
+    :bar-width bar-width)
+   :prefix prefix
+   :face face
+   :properties properties
+   :action action
+   :help-echo help-echo))
+
 (defun appkit-chat-ins-media-kind-tag (kind)
   "Return human-oriented header tag string for attachment KIND."
   (pcase kind
