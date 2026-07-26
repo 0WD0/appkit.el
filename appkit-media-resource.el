@@ -109,8 +109,33 @@ The function receives one local filename."
        (not (string-empty-p url))))
 
 (defun appkit-media-file-present-p (file)
-  "Return non-nil when FILE names an existing local file."
-  (and (stringp file) (file-exists-p file)))
+  "Return non-nil when FILE names an existing regular file."
+  (and (stringp file) (file-regular-p file)))
+
+(defun appkit-media-readable-file-p (file)
+  "Return non-nil when FILE names a readable regular file."
+  (and (appkit-media-file-present-p file)
+       (file-readable-p file)))
+
+(defun appkit-media-read-file-name
+    (prompt &optional dir default-filename initial)
+  "Read and return a readable regular file name using PROMPT.
+
+DIR, DEFAULT-FILENAME, and INITIAL have the same meanings as in
+`read-file-name'.  Directories remain navigable completion candidates but
+cannot finish the prompt.  The returned value is checked again because some
+graphical file dialogs do not enforce `read-file-name' acceptance functions."
+  (let* ((base-directory (or dir default-directory))
+         (acceptable-p
+          (lambda (file)
+            (appkit-media-readable-file-p
+             (expand-file-name file base-directory))))
+         (file
+          (read-file-name
+           prompt dir default-filename acceptable-p initial)))
+    (unless (funcall acceptable-p file)
+      (user-error "Media attachment is not a readable regular file: %s" file))
+    file))
 
 (defun appkit-media-url-filename (url)
   "Extract a best-effort filename from URL."
