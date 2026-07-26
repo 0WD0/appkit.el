@@ -64,6 +64,47 @@
   (should (appkit-media-video-file-name-p "clip.MP4#play"))
   (should-not (appkit-media-image-file-name-p "archive.png.zip")))
 
+(ert-deftest appkit-media-file-presence-requires-a-regular-file ()
+  (let ((directory (make-temp-file "appkit-media-file-" t))
+        file)
+    (unwind-protect
+        (progn
+          (setq file (expand-file-name "payload.bin" directory))
+          (with-temp-file file (insert "payload"))
+          (should (appkit-media-file-present-p file))
+          (should (appkit-media-readable-file-p file))
+          (should-not (appkit-media-file-present-p directory))
+          (should-not (appkit-media-readable-file-p directory)))
+      (delete-directory directory t))))
+
+(ert-deftest appkit-media-file-reader-enforces-regular-file-at-both-boundaries ()
+  (let* ((directory (make-temp-file "appkit-media-reader-" t))
+         (file (expand-file-name "payload.bin" directory))
+         reader-arguments)
+    (unwind-protect
+        (progn
+          (with-temp-file file (insert "payload"))
+          (cl-letf (((symbol-function 'read-file-name)
+                     (lambda (&rest arguments)
+                       (setq reader-arguments arguments)
+                       file)))
+            (should
+             (equal file
+                    (appkit-media-read-file-name
+                     "Attachment: " directory)))
+            (let ((accept (nth 3 reader-arguments)))
+              (should (functionp accept))
+              (should (funcall accept file))
+              (should-not (funcall accept directory))))
+          ;; Recheck the result independently of the reader.  Native graphical
+          ;; dialogs are not required to honor the acceptance function.
+          (cl-letf (((symbol-function 'read-file-name)
+                     (lambda (&rest _) directory)))
+            (should-error
+             (appkit-media-read-file-name "Attachment: " directory)
+             :type 'user-error)))
+      (delete-directory directory t))))
+
 (ert-deftest appkit-media-local-resource-copy-completes-synchronously ()
   (let* ((directory (make-temp-file "appkit-media-copy" t))
          (source (expand-file-name "source.bin" directory))
