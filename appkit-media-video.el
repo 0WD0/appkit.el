@@ -238,15 +238,6 @@ and its TARGET-FILE, or two nil values when extraction fails."
                (ignore-errors (delete-file target-file)))
              (signal (car error-data) (cdr error-data)))))))))
 
-(defun appkit-media--image-mime-type (file)
-  "Return an image MIME type for FILE, or nil."
-  (pcase (downcase (or (file-name-extension file) ""))
-    ("png" "image/png")
-    ((or "jpg" "jpeg") "image/jpeg")
-    ("gif" "image/gif")
-    ("webp" "image/webp")
-    ("svg" "image/svg+xml")))
-
 (defun appkit-media--video-preview-image-source (image)
   "Return an SVG-embeddable source plist for IMAGE."
   (let* ((properties (cdr-safe image))
@@ -255,7 +246,7 @@ and its TARGET-FILE, or two nil values when extraction fails."
          (type (plist-get properties :type))
          (mime (cond
                 ((and (stringp file) (file-exists-p file))
-                 (appkit-media--image-mime-type file))
+                 (appkit-media-image-mime-type file))
                 ((eq type 'svg) "image/svg+xml")
                 ((eq type 'png) "image/png")
                 ((memq type '(jpeg jpg)) "image/jpeg")

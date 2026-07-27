@@ -12,6 +12,7 @@
 (require 'cl-lib)
 (require 'image)
 (require 'seq)
+(require 'svg nil t)
 (require 'appkit-core)
 (require 'appkit-media-card)
 
@@ -114,6 +115,56 @@ the returned image spec.  IMAGE remains suitable for immutable caches."
              (image-size image t)
              t)
          (error nil))))
+
+(defun appkit-media-image-mime-type (file)
+  "Return the SVG-embeddable image MIME type of FILE, or nil.
+
+Prefer the file header over its name so extensionless cache files and stale
+filename hints cannot select the wrong decoder."
+  (when (and (stringp file) (file-readable-p file))
+    (pcase (or (ignore-errors (image-type-from-file-header file))
+               (ignore-errors (image-supported-file-p file)))
+      ('png "image/png")
+      ((or 'jpeg 'jpg) "image/jpeg")
+      ('gif "image/gif")
+      ('webp "image/webp")
+      ('svg "image/svg+xml")
+      (_ nil))))
+
+(defun appkit-media-circular-image-from-file (file pixel-size)
+  "Return FILE center-cropped to a circular PIXEL-SIZE image, or nil.
+
+The source is embedded in an SVG and clipped geometrically; `:mask
+heuristic' is intentionally insufficient because it follows source colors
+instead of the avatar outline.  Unsupported image formats or displays fall
+back to nil so applications can retain their ordinary square image path."
+  (when (and (stringp file)
+             (file-readable-p file)
+             (numberp pixel-size)
+             (> pixel-size 0)
+             (image-type-available-p 'svg)
+             (fboundp 'svg-create)
+             (fboundp 'svg-clip-path)
+             (fboundp 'svg-circle)
+             (fboundp 'svg-embed)
+             (fboundp 'svg-image))
+    (condition-case nil
+        (when-let* ((mime-type (appkit-media-image-mime-type file)))
+          (let* ((size (max 1 (round pixel-size)))
+                 (radius (/ size 2.0))
+                 (svg (svg-create size size))
+                 (clip (svg-clip-path svg :id "appkit-avatar-clip")))
+            (svg-circle clip radius radius radius)
+            (svg-embed
+             svg file mime-type nil
+             :x 0 :y 0 :width size :height size
+             :preserveAspectRatio "xMidYMid slice"
+             :clip-path "url(#appkit-avatar-clip)")
+            (let ((image
+                   (svg-image
+                    svg :ascent 'center :width size :height size)))
+              (and (appkit-media-image-object-valid-p image) image))))
+      (error nil))))
 
 (defun appkit-media--file-size (file)
   "Return FILE size in bytes, or nil when it is unavailable."
