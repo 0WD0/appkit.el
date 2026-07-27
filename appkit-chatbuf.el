@@ -350,7 +350,12 @@ PROMPT defaults to `>>> '.  If a prompt already exists, update it in place."
   "Replace the visible prompt text with PROMPT.
 
 PROMPT defaults to `>>> '.  Any existing input contents stay in place and
-point is restored relative to the input start when it was inside the input."
+point is restored relative to the input start when it was inside the input.
+
+The prompt is generated presentation, not composer input.  Replacing it does
+not mark the buffer modified, enter undo history, or run input modification
+hooks.  Text properties carried by PROMPT, including inline image display
+properties, are preserved."
   (interactive)
   (appkit-chatbuf-init-state)
   (let* ((prompt-text (or prompt ">>> "))
@@ -359,15 +364,16 @@ point is restored relative to the input start when it was inside the input."
          (in-input (appkit-chatbuf-point-in-input-p))
          (input-offset (and in-input (- (point) input-start)))
          (inhibit-read-only t))
-    (save-excursion
-      (delete-region prompt-start input-start)
-      (goto-char prompt-start)
-      (set-marker-insertion-type appkit-chatbuf--prompt-marker nil)
-      (set-marker appkit-chatbuf--prompt-marker (point) (current-buffer))
-      (setq appkit-chatbuf--prompt-button
-            (insert-text-button prompt-text 'type 'appkit-chatbuf-prompt))
-      (set-marker-insertion-type appkit-chatbuf--prompt-marker t)
-      (set-marker appkit-chatbuf--input-marker (point) (current-buffer)))
+    (with-silent-modifications
+      (save-excursion
+        (delete-region prompt-start input-start)
+        (goto-char prompt-start)
+        (set-marker-insertion-type appkit-chatbuf--prompt-marker nil)
+        (set-marker appkit-chatbuf--prompt-marker (point) (current-buffer))
+        (setq appkit-chatbuf--prompt-button
+              (insert-text-button prompt-text 'type 'appkit-chatbuf-prompt))
+        (set-marker-insertion-type appkit-chatbuf--prompt-marker t)
+        (set-marker appkit-chatbuf--input-marker (point) (current-buffer))))
     (appkit-chatbuf--restore-input-point input-offset)
     appkit-chatbuf--prompt-button))
 
