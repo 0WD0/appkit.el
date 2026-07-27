@@ -116,6 +116,34 @@
     (should (equal "hello" (appkit-chatbuf-input-string)))
     (should (= 2 (- (point) (appkit-chatbuf-input-start-position))))))
 
+(ert-deftest appkit-chatbuf-prompt-update-is-generated-presentation ()
+  (with-temp-buffer
+    (buffer-enable-undo)
+    (insert "timeline\n")
+    (appkit-chatbuf-install-prompt ">>> ")
+    (insert "draft")
+    (let ((prompt (copy-sequence "# >>> "))
+          (input-start (appkit-chatbuf-input-start-position))
+          modification-ran-p)
+      (put-text-property 0 1 'display '(image :type png :data "avatar") prompt)
+      (add-hook 'after-change-functions
+                (lambda (&rest _arguments)
+                  (setq modification-ran-p t))
+                nil t)
+      (setq buffer-undo-list nil)
+      (set-buffer-modified-p nil)
+      (goto-char (+ input-start 2))
+      (appkit-chatbuf-prompt-update prompt)
+      (should-not modification-ran-p)
+      (should-not (buffer-modified-p))
+      (should-not buffer-undo-list)
+      (should (equal "draft" (appkit-chatbuf-input-string)))
+      (should (= 2 (- (point) (appkit-chatbuf-input-start-position))))
+      (should
+       (equal '(image :type png :data "avatar")
+              (get-text-property
+               (appkit-chatbuf-prompt-start-position) 'display))))))
+
 (ert-deftest appkit-chatbuf-bind-input-region-hides-and-restores-tail-input ()
   (with-temp-buffer
     (insert "timeline\n")
