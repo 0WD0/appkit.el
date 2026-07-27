@@ -23,6 +23,55 @@
     (should-not (appkit-media-image-object-valid-p 'invalid))
     (should-not (appkit-media-image-object-valid-p nil))))
 
+(ert-deftest appkit-media-image-mime-prefers-file-header ()
+  (cl-letf (((symbol-function 'file-readable-p) (lambda (_file) t))
+            ((symbol-function 'image-type-from-file-header)
+             (lambda (_file) 'jpeg))
+            ((symbol-function 'image-supported-file-p)
+             (lambda (_file) 'png)))
+    (should
+     (equal "image/jpeg"
+            (appkit-media-image-mime-type "/tmp/misnamed.png")))))
+
+(ert-deftest appkit-media-circular-image-clips-and-center-crops-source ()
+  (let (circle-call embed-call image-properties)
+    (cl-letf (((symbol-function 'file-readable-p) (lambda (_file) t))
+              ((symbol-function 'image-type-available-p)
+               (lambda (type) (eq type 'svg)))
+              ((symbol-function 'appkit-media-image-mime-type)
+               (lambda (_file) "image/jpeg"))
+              ((symbol-function 'svg-create)
+               (lambda (width height) (list :svg width height)))
+              ((symbol-function 'svg-clip-path)
+               (lambda (_svg &rest _properties) :clip))
+              ((symbol-function 'svg-circle)
+               (lambda (&rest arguments)
+                 (setq circle-call arguments)))
+              ((symbol-function 'svg-embed)
+               (lambda (&rest arguments)
+                 (setq embed-call arguments)))
+              ((symbol-function 'svg-image)
+               (lambda (_svg &rest properties)
+                 (setq image-properties properties)
+                 '(image :type svg :data "avatar")))
+              ((symbol-function 'appkit-media-image-object-valid-p)
+               (lambda (_image) t)))
+      (should
+       (equal '(image :type svg :data "avatar")
+              (appkit-media-circular-image-from-file
+               "/tmp/avatar.jpg" 21)))
+      (should (equal circle-call '(:clip 10.5 10.5 10.5)))
+      (should (equal (seq-take embed-call 4)
+                     '((:svg 21 21) "/tmp/avatar.jpg" "image/jpeg" nil)))
+      (should
+       (equal (plist-get (nthcdr 4 embed-call) :preserveAspectRatio)
+              "xMidYMid slice"))
+      (should
+       (equal (plist-get (nthcdr 4 embed-call) :clip-path)
+              "url(#appkit-avatar-clip)"))
+      (should (equal image-properties
+                     '(:ascent center :width 21 :height 21))))))
+
 (ert-deftest appkit-media-marks-only-bounded-multi-frame-previews ()
   (let ((appkit-media-inline-animation-enabled t)
         (appkit-media-inline-animation-max-duration 10)
