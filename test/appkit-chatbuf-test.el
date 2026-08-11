@@ -4,6 +4,17 @@
 
 (require 'appkit-chatbuf)
 
+(defvar appkit-chatbuf-test--timeline-mode-map
+  (let ((map (make-sparse-keymap)))
+    (define-key map (kbd "q") #'quit-window)
+    map))
+
+(define-minor-mode appkit-chatbuf-test--timeline-mode
+  "Enable test-only timeline keys."
+  :init-value nil
+  :lighter nil
+  :keymap appkit-chatbuf-test--timeline-mode-map)
+
 (ert-deftest appkit-chatbuf-install-prompt-creates-tail-input-region ()
   (with-temp-buffer
     (insert "timeline\n")
@@ -176,6 +187,39 @@
     (appkit-chatbuf-post-command-clamp-point)
     (should (= (point) (appkit-chatbuf-input-start-position)))))
 
+(ert-deftest appkit-chatbuf-bind-protects-generated-content-not-input ()
+  (with-temp-buffer
+    (insert "timeline\n")
+    (appkit-chatbuf-bind-input-region
+     :visible-p t :prompt ">>> " :input-text "draft")
+    (should-not
+     (text-property-not-all
+      (point-min) (appkit-chatbuf-prompt-start-position) 'read-only t))
+    (goto-char (point-min))
+    (should-error (delete-char 1) :type 'text-read-only)
+    (goto-char (point-max))
+    (insert "!")
+    (should (equal "draft!" (appkit-chatbuf-input-string)))))
+
+(ert-deftest appkit-chatbuf-mode-switches-timeline-keys-by-point-context ()
+  (with-temp-buffer
+    (appkit-chatbuf-mode)
+    (insert "timeline\n")
+    (appkit-chatbuf-bind-input-region
+     :visible-p t :prompt ">>> " :input-text "")
+    (appkit-chatbuf-use-timeline-mode
+     #'appkit-chatbuf-test--timeline-mode)
+    (goto-char (point-min))
+    (appkit-chatbuf-post-command)
+    (should appkit-chatbuf-test--timeline-mode)
+    (should (eq (key-binding (kbd "q")) #'quit-window))
+    (goto-char (point-max))
+    (appkit-chatbuf-post-command)
+    (should-not appkit-chatbuf-test--timeline-mode)
+    (should (eq (key-binding (kbd "q")) #'self-insert-command))
+    (insert "draft")
+    (should (equal "draft" (appkit-chatbuf-input-state)))))
+
 (ert-deftest appkit-chatbuf-structured-object-insert-and-prune ()
   (with-temp-buffer
     (appkit-chatbuf-install-prompt ">>> ")
@@ -222,7 +266,7 @@
         :sync-function #'appkit-chatbuf-input-state-sync))
      nil t)
     (goto-char (point-max))
-    (delete-backward-char 1)
+    (delete-char -1)
     (should (equal "ab" (appkit-chatbuf-input-state)))
     (appkit-chatbuf-bind-input-region
      :visible-p t :prompt ">>> " :input-text (appkit-chatbuf-input-state))

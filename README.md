@@ -1,7 +1,7 @@
 # appkit.el
 
 `appkit.el` contains protocol-independent runtime pieces shared by `disco.el`,
-`emacs-qq`, and `emacs-zulip`:
+`emacs-qq`, `emacs-zulip`, and `chirp`:
 
 - app sessions, buffer views, and owned timers/hooks/processes
 - owner-scoped keyed FIFO task queues with bounded concurrency
@@ -9,7 +9,8 @@
 - coalesced invalidation followed by one view-owned synchronization callback
 - stable-key EWOC reconciliation and independent semantic point/viewport
   restoration for every live window showing a view
-- a persistent chat composer, shared rich completion substrate, projected
+- a persistent chat composer, editable chat-buffer base mode, point-local
+  timeline command switching, shared rich completion substrate, projected
   Unicode emoji completion, continuous history-window state, and keyed chat
   timeline projection
 - reusable prefix, one-line/list-view, mode-line, two-line avatar,
@@ -120,7 +121,11 @@ the same fallback display name; Appkit gives the later buffer a normal unique
 name instead of treating a title collision as an identity collision.
 
 Generated structural edits are undo-free; the editable tail composer keeps
-normal Emacs undo behavior.
+normal Emacs undo behavior.  `appkit-chatbuf-mode` supplies the writable base
+mode and standard edit/history keys.  Clients define their own timeline-only
+minor mode and register it with `appkit-chatbuf-use-timeline-mode`; Appkit then
+clamps prompt motion, switches command context at the composer boundary, and
+keeps generated content before the prompt read-only.
 
 Position snapshots belong to Appkit rather than to a client redraw loop.  For
 each live window showing the buffer, Appkit preserves `window-point` and

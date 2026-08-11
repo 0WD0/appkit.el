@@ -330,7 +330,9 @@ old semantic row keys to new keys."
         (setf (appkit-chat-timeline--state-mutation-depth state) 1)
         (unwind-protect
             (appkit-chatbuf-with-generated-update
-              (funcall mutator))
+              (unwind-protect
+                  (funcall mutator)
+                (appkit-chatbuf-protect-generated-content)))
           (setf (appkit-chat-timeline--state-mutation-depth state) 0)
           (appkit-chat-timeline--restore-zone-state point-state rekeys)
           (appkit-chatbuf-restore-window-input-offsets window-input-offsets)

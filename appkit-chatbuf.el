@@ -135,6 +135,9 @@ history navigation state is reset when RESET-HISTORY-P is non-nil."
 (defvar-local appkit-chatbuf--rendering nil
   "Non-nil while the owning chat buffer is performing a bulk redraw.")
 
+(defvar-local appkit-chatbuf--timeline-mode nil
+  "Minor mode function used for commands outside the composer.")
+
 (defvar appkit-chatbuf--mutating-input nil
   "Dynamically non-nil while a compound composer mutation is in progress.")
 
@@ -312,6 +315,65 @@ RING-SIZE overrides `appkit-chatbuf-input-ring-size' when non-nil."
     (when-let* ((input-start (appkit-chatbuf-input-start-position)))
       (goto-char input-start))))
 
+(defun appkit-chatbuf-update-context-mode ()
+  "Toggle the configured timeline mode for the current point context."
+  (when-let* ((mode appkit-chatbuf--timeline-mode))
+    (let ((timeline-p (not (appkit-chatbuf-point-in-input-p)))
+          (active-p (and (boundp mode) (symbol-value mode))))
+      (unless (eq (not (null active-p)) timeline-p)
+        (funcall mode (if timeline-p 1 -1))))))
+
+(defun appkit-chatbuf-use-timeline-mode (mode)
+  "Use minor MODE for commands outside the trailing composer.
+
+MODE must name a defined minor mode whose function and state variable share
+that symbol.  Passing nil removes the current timeline mode."
+  (unless (or (null mode)
+              (and (symbolp mode) (fboundp mode) (boundp mode)))
+    (error "Appkit timeline mode is unavailable: %S" mode))
+  (when (and appkit-chatbuf--timeline-mode
+             (boundp appkit-chatbuf--timeline-mode)
+             (symbol-value appkit-chatbuf--timeline-mode))
+    (funcall appkit-chatbuf--timeline-mode -1))
+  (setq-local appkit-chatbuf--timeline-mode mode)
+  (appkit-chatbuf-update-context-mode)
+  mode)
+
+(defun appkit-chatbuf-post-command ()
+  "Maintain prompt boundaries and point-local timeline command context."
+  (unless (appkit-chatbuf-rendering-p)
+    (appkit-chatbuf-post-command-clamp-point)
+    (appkit-chatbuf-update-context-mode)))
+
+(defun appkit-chatbuf--after-change (beg end old-length)
+  "Synchronize canonical input after BEG to END replaces OLD-LENGTH chars."
+  (unless appkit-chatbuf--mutating-input
+    (appkit-chatbuf-after-change
+     beg end
+     :old-length old-length
+     :rendering-p (appkit-chatbuf-rendering-p)
+     :sync-function #'appkit-chatbuf-input-state-sync)))
+
+(defvar appkit-chatbuf-mode-map
+  (let ((map (make-sparse-keymap)))
+    (define-key map (kbd "DEL") #'appkit-chatbuf-input-backward-delete)
+    (define-key map (kbd "<backspace>")
+                #'appkit-chatbuf-input-backward-delete)
+    (define-key map (kbd "C-d") #'appkit-chatbuf-input-forward-delete)
+    (define-key map (kbd "<delete>") #'appkit-chatbuf-input-forward-delete)
+    (define-key map (kbd "M-p") #'appkit-chatbuf-input-history-prev)
+    (define-key map (kbd "M-n") #'appkit-chatbuf-input-history-next)
+    map)
+  "Base keymap for editable Appkit chat buffers.")
+
+(define-derived-mode appkit-chatbuf-mode nil "Appkit-Chat"
+  "Base major mode for a generated timeline with a trailing composer."
+  (appkit-chatbuf-mode-setup)
+  (appkit-chatbuf-reset-state)
+  (setq-local buffer-read-only nil)
+  (add-hook 'after-change-functions #'appkit-chatbuf--after-change nil t)
+  (add-hook 'post-command-hook #'appkit-chatbuf-post-command nil t))
+
 (defun appkit-chatbuf--ensure-point-after-input-start ()
   "Move point to the end of buffer when it is before input start."
   (when-let* ((input-start (appkit-chatbuf-input-start-position)))
@@ -333,7 +395,8 @@ PROMPT defaults to `>>> '.  If a prompt already exists, update it in place."
   (appkit-chatbuf-init-state)
   (if (appkit-chatbuf-prompt-button-live-p)
       (appkit-chatbuf-prompt-update prompt)
-    (let ((prompt-text (or prompt ">>> ")))
+    (let ((prompt-text (or prompt ">>> "))
+          (inhibit-read-only t))
       (goto-char (point-max))
       ;; The prompt lives after the EWOC footer.  Keep its marker advancing
       ;; when timeline rows are inserted at that boundary, but not while the
@@ -438,13 +501,22 @@ offset from the input start when possible."
     (appkit-chatbuf-input-set-text text)
     (appkit-chatbuf--restore-input-point input-offset)))
 
+(defun appkit-chatbuf-protect-generated-content ()
+  "Make generated content before the composer prompt read-only."
+  (when-let* ((prompt-start (appkit-chatbuf-prompt-start-position)))
+    (with-silent-modifications
+      (add-text-properties
+       (point-min) prompt-start
+       '(read-only t front-sticky (read-only)
+         rear-nonsticky (read-only))))))
+
 (cl-defun appkit-chatbuf-bind-input-region (&key visible-p prompt input-text post-bind-function)
   "Ensure the tail input region matches VISIBLE-P, PROMPT and INPUT-TEXT.
 
 When VISIBLE-P is nil, remove the current prompt and input region.  Otherwise,
-install or update PROMPT, replace the input contents with INPUT-TEXT, and call
-POST-BIND-FUNCTION when non-nil.  This is a shared chatbuf primitive; callers
-can use POST-BIND-FUNCTION for owner-specific text properties or local repair."
+install or update PROMPT, protect generated content, replace the editable input
+with INPUT-TEXT, and call POST-BIND-FUNCTION when non-nil.  Callers can use
+POST-BIND-FUNCTION for owner-specific text properties or local repair."
   (appkit-chatbuf-init-state)
   (if (not visible-p)
       (appkit-chatbuf-clear-prompt-and-input)
@@ -454,6 +526,8 @@ can use POST-BIND-FUNCTION for owner-specific text properties or local repair."
           (appkit-chatbuf-prompt-update prompt)
         (appkit-chatbuf-install-prompt prompt)))
     (appkit-chatbuf-input-set-text input-text)
+    (appkit-chatbuf-protect-generated-content)
+    (appkit-chatbuf-input-apply-text-properties)
     (when (functionp post-bind-function)
       (funcall post-bind-function))))
 
