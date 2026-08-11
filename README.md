@@ -124,8 +124,11 @@ Generated structural edits are undo-free; the editable tail composer keeps
 normal Emacs undo behavior.  `appkit-chatbuf-mode` supplies the writable base
 mode and standard edit/history keys.  Clients define their own timeline-only
 minor mode and register it with `appkit-chatbuf-use-timeline-mode`; Appkit then
-clamps prompt motion, switches command context at the composer boundary, and
-keeps generated content before the prompt read-only.
+clamps prompt motion, repairs structured input objects, switches command
+context at the composer boundary, and keeps generated content read-only even
+when the composer is hidden.  Rich clients set
+`appkit-chatbuf-input-sync-function` to synchronize protocol-specific draft
+state without installing a second after-change controller.
 
 Position snapshots belong to Appkit rather than to a client redraw loop.  For
 each live window showing the buffer, Appkit preserves `window-point` and
