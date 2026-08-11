@@ -158,6 +158,11 @@
 (ert-deftest appkit-chatbuf-bind-input-region-hides-and-restores-tail-input ()
   (with-temp-buffer
     (insert "timeline\n")
+    (appkit-chatbuf-bind-input-region :visible-p nil)
+    (should-not
+     (text-property-not-all (point-min) (point-max) 'read-only t))
+    (goto-char (point-min))
+    (should-error (delete-char 1) :type 'text-read-only)
     (appkit-chatbuf-bind-input-region
      :visible-p t
      :prompt ">>> "
@@ -178,6 +183,21 @@
      :input-text "world")
     (should (appkit-chatbuf-prompt-button-live-p))
     (should (equal "world" (appkit-chatbuf-input-string)))))
+
+(ert-deftest appkit-chatbuf-mode-uses-client-input-sync-function-once ()
+  (with-temp-buffer
+    (appkit-chatbuf-mode)
+    (appkit-chatbuf-bind-input-region
+     :visible-p t :prompt ">>> " :input-text "draft")
+    (let ((sync-count 0))
+      (setq-local appkit-chatbuf-input-sync-function
+                  (lambda ()
+                    (cl-incf sync-count)
+                    (appkit-chatbuf-input-state-sync)))
+      (goto-char (point-max))
+      (insert "!")
+      (should (= sync-count 1))
+      (should (equal (appkit-chatbuf-input-state) "draft!")))))
 
 (ert-deftest appkit-chatbuf-post-command-clamp-point-skips-prompt-glyphs ()
   (with-temp-buffer

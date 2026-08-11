@@ -138,6 +138,12 @@ history navigation state is reset when RESET-HISTORY-P is non-nil."
 (defvar-local appkit-chatbuf--timeline-mode nil
   "Minor mode function used for commands outside the composer.")
 
+(defvar-local appkit-chatbuf-input-sync-function
+  #'appkit-chatbuf-input-state-sync
+  "Function that synchronizes canonical input after an editable change.
+
+A nil value disables automatic canonical input synchronization.")
+
 (defvar appkit-chatbuf--mutating-input nil
   "Dynamically non-nil while a compound composer mutation is in progress.")
 
@@ -340,9 +346,12 @@ that symbol.  Passing nil removes the current timeline mode."
   mode)
 
 (defun appkit-chatbuf-post-command ()
-  "Maintain prompt boundaries and point-local timeline command context."
+  "Maintain shared composer and point-context invariants."
   (unless (appkit-chatbuf-rendering-p)
     (appkit-chatbuf-post-command-clamp-point)
+    (when (and (appkit-chatbuf-point-in-input-p)
+               (appkit-chatbuf-input-has-objects-p))
+      (appkit-chatbuf-input-prune-broken-objects))
     (appkit-chatbuf-update-context-mode)))
 
 (defun appkit-chatbuf--after-change (beg end old-length)
@@ -352,7 +361,8 @@ that symbol.  Passing nil removes the current timeline mode."
      beg end
      :old-length old-length
      :rendering-p (appkit-chatbuf-rendering-p)
-     :sync-function #'appkit-chatbuf-input-state-sync)))
+     :prune-broken-objects t
+     :sync-function appkit-chatbuf-input-sync-function)))
 
 (defvar appkit-chatbuf-mode-map
   (let ((map (make-sparse-keymap)))
@@ -502,11 +512,11 @@ offset from the input start when possible."
     (appkit-chatbuf--restore-input-point input-offset)))
 
 (defun appkit-chatbuf-protect-generated-content ()
-  "Make generated content before the composer prompt read-only."
-  (when-let* ((prompt-start (appkit-chatbuf-prompt-start-position)))
+  "Make generated content outside the trailing composer read-only."
+  (let ((end (or (appkit-chatbuf-prompt-start-position) (point-max))))
     (with-silent-modifications
       (add-text-properties
-       (point-min) prompt-start
+       (point-min) end
        '(read-only t front-sticky (read-only)
          rear-nonsticky (read-only))))))
 
@@ -519,7 +529,9 @@ with INPUT-TEXT, and call POST-BIND-FUNCTION when non-nil.  Callers can use
 POST-BIND-FUNCTION for owner-specific text properties or local repair."
   (appkit-chatbuf-init-state)
   (if (not visible-p)
-      (appkit-chatbuf-clear-prompt-and-input)
+      (progn
+        (appkit-chatbuf-clear-prompt-and-input)
+        (appkit-chatbuf-protect-generated-content))
     (save-excursion
       (goto-char (point-max))
       (if (appkit-chatbuf-prompt-button-live-p)
