@@ -61,12 +61,19 @@ When nil, leave Evil's initial-state selection untouched."
 (defun appkit-evil--install-binding (entry)
   "Install deferred binding ENTRY and return non-nil when successful."
   (pcase-let ((`(,states ,keymap-symbol ,bindings) entry))
-    (when-let* ((keymap (appkit-evil--keymap-value keymap-symbol)))
+    (when-let* (((featurep 'evil))
+                ((fboundp 'evil-define-key*))
+                (keymap (appkit-evil--keymap-value keymap-symbol)))
       (apply #'evil-define-key* states keymap bindings)
       t)))
 
 (defun appkit-evil--after-load (&rest _args)
   "Install bindings whose keymaps became available after a library load."
+  (when (and (featurep 'evil)
+             appkit-evil-enable-integration
+             appkit-evil-directory-initial-state)
+    (evil-set-initial-state
+     'appkit-directory-mode appkit-evil-directory-initial-state))
   (setq appkit-evil--deferred-bindings
         (cl-delete-if #'appkit-evil--install-binding
                       appkit-evil--deferred-bindings))
@@ -77,18 +84,17 @@ When nil, leave Evil's initial-state selection untouched."
   "Define Evil BINDINGS for STATES in KEYMAP-SYMBOL.
 
 STATES is an Evil state or a list of states.  KEYMAP-SYMBOL names a keymap
-variable and may be defined later.  This function is effective only after Evil
-has loaded; call it from an Evil setup function or `with-eval-after-load'."
+variable and may be defined later.  Installation waits until both Evil and the
+keymap are available."
   (declare (indent 2))
   (unless (symbolp keymap-symbol)
     (error "Appkit Evil keymap name is not a symbol: %S" keymap-symbol))
-  (when (and (featurep 'evil) (fboundp 'evil-define-key*))
-    (let ((entry (list states keymap-symbol bindings)))
-      (if (appkit-evil--install-binding entry)
-          (setq appkit-evil--deferred-bindings
-                (delete entry appkit-evil--deferred-bindings))
-        (cl-pushnew entry appkit-evil--deferred-bindings :test #'equal)
-        (add-hook 'after-load-functions #'appkit-evil--after-load t))))
+  (let ((entry (list states keymap-symbol bindings)))
+    (if (appkit-evil--install-binding entry)
+        (setq appkit-evil--deferred-bindings
+              (delete entry appkit-evil--deferred-bindings))
+      (cl-pushnew entry appkit-evil--deferred-bindings :test #'equal)
+      (add-hook 'after-load-functions #'appkit-evil--after-load t)))
   keymap-symbol)
 
 (defun appkit-evil-normalize-keymaps ()
@@ -127,14 +133,13 @@ Call this before adding surface-specific bindings."
   "Install Appkit's native Evil integration.
 Safe to call multiple times."
   (interactive)
-  (when (and (featurep 'evil) appkit-evil-enable-integration)
-    (when appkit-evil-directory-initial-state
+  (when appkit-evil-enable-integration
+    (when (and (featurep 'evil) appkit-evil-directory-initial-state)
       (evil-set-initial-state
        'appkit-directory-mode appkit-evil-directory-initial-state))
     (appkit-evil--define-directory-keys)))
 
-(with-eval-after-load 'evil
-  (appkit-evil-setup))
+(appkit-evil-setup)
 
 (provide 'appkit-evil)
 
