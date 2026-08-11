@@ -208,6 +208,10 @@
           (should (eq prompt-marker appkit-chatbuf--prompt-marker))
           (should (eq input-marker appkit-chatbuf--input-marker))
           (should (equal "live edit" (appkit-chatbuf-input-string)))
+          (should-not
+           (text-property-not-all
+            (point-min) (appkit-chatbuf-prompt-start-position)
+            'read-only t))
           (should (string-match-p "new header" (buffer-string)))
           (should (string-match-p "substantially longer new footer"
                                   (buffer-string)))
@@ -240,9 +244,36 @@
         (should (<= footer prompt input))
         (should (appkit-chatbuf-prompt-button-live-p))
         (should (equal "draft" (appkit-chatbuf-input-string)))
+        (should-not
+         (text-property-not-all (point-min) prompt 'read-only t))
         (should (string-match-p
                  "a:A:plain\nb:B:plain\nfooter\n>>> draft\\'"
                  (buffer-string)))))))
+
+(ert-deftest appkit-chat-timeline-failed-mutation-reprotects-generated-content ()
+  (appkit-test-with-view
+    (let ((prints (make-hash-table :test #'equal)))
+      (appkit-chatbuf-init-state 8)
+      (appkit-chat-timeline-ensure
+       :printer (appkit-chat-timeline-test--printer prints)
+       :anchor-property 'test-message-key)
+      (appkit-chat-timeline-set-frame
+       "" ""
+       :bind-input-function
+       (lambda ()
+         (appkit-chatbuf-bind-input-region
+          :visible-p t :prompt ">>> " :input-text "draft"))
+       :composer-visible-p t)
+      (let ((start (appkit-chatbuf-prompt-start-position)))
+        (should-error
+         (appkit-chat-timeline-run-preserving-position
+          (lambda ()
+            (goto-char start)
+            (insert "partial")
+            (error "printer failed"))))
+        (should-not
+         (text-property-not-all
+          start (appkit-chatbuf-prompt-start-position) 'read-only t))))))
 
 (ert-deftest appkit-chat-timeline-frame-update-removes-hidden-composer-only ()
   (appkit-test-with-view
