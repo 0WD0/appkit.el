@@ -9,11 +9,9 @@
   coalesced invalidation, and semantic position preservation
 - explicit generated-content, property-only, and editable transactions
 - stable-key EWOC reconciliation and independent semantic point/viewport
-  restoration for every live window showing a view
-- a persistent chat composer, editable chat-buffer base mode, point-local
-  timeline command switching, shared rich completion substrate, projected
-  Unicode emoji completion, continuous history-window state, and keyed chat
-  timeline projection
+- standalone compose surfaces with generated context, status fields, attachments, and editable-body invariants
+- a persistent chat composer, editable chat-buffer base mode, point-local timeline command switching, shared rich completion substrate, projected
+- Unicode emoji completion, continuous history-window state, and keyed chat timeline projection
 - reusable prefix, one-line/list-view, mode-line, two-line avatar,
   threaded-discussion, sectioned-directory geometry, and deterministic
   identity-keyed name coloring
@@ -62,7 +60,7 @@ developed together:
 ```
 
 No consumer compatibility aliases are provided.  Shared code uses the
-`appkit-task-queue-*`, `appkit-projection-*`,
+`appkit-task-queue-*`, `appkit-projection-*`, `appkit-compose-*`,
 `appkit-chatbuf-*`, `appkit-chat-history-*`, `appkit-chat-timeline-*`,
 `appkit-ui-*`, `appkit-view-*`, `appkit-chat-completion-*`,
 `appkit-chat-ins-*`, `appkit-discussion-*`, `appkit-directory-*`,

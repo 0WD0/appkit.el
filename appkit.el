@@ -26,7 +26,7 @@
 (require 'appkit-ewoc)
 (require 'appkit-invalidation)
 (require 'appkit-projection)
-(require 'appkit-chatbuf)
+(require 'appkit-compose)
 (require 'appkit-chat-history)
 (require 'appkit-chat-completion)
 (require 'appkit-chat-emoji)
