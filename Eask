@@ -18,4 +18,4 @@
 (development
  (depends-on "evil"))
 
-(script "test" "eask test ert test/*.el")
+(script "test" "eask test ert --quiet test/*.el")
