@@ -62,12 +62,12 @@
     (error "Appkit discussion entry has two heading sources"))
   (dolist (slot '(heading-inserter body-inserter avatar-action))
     (when-let* ((value (pcase slot
-                        ('heading-inserter
-                         (appkit-discussion-entry-heading-inserter entry))
-                        ('body-inserter
-                         (appkit-discussion-entry-body-inserter entry))
-                        ('avatar-action
-                         (appkit-discussion-entry-avatar-action entry)))))
+                         ('heading-inserter
+                          (appkit-discussion-entry-heading-inserter entry))
+                         ('body-inserter
+                          (appkit-discussion-entry-body-inserter entry))
+                         ('avatar-action
+                          (appkit-discussion-entry-avatar-action entry)))))
       (unless (functionp value)
         (error "Appkit discussion %s is not callable" slot))))
   entry)
