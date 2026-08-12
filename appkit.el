@@ -6,7 +6,7 @@
 ;; Maintainer: 0WD0 <wd.1105848296@gmail.com>
 ;; Keywords: lisp, extensions
 ;; URL: https://github.com/0WD0/appkit.el
-;; Version: 0.2.2
+;; Version: 0.2.3
 ;; Package-Requires: ((emacs "27.1") (plz "0.8"))
 
 ;;; Commentary:
@@ -25,6 +25,7 @@
 (require 'appkit-position)
 (require 'appkit-ewoc)
 (require 'appkit-invalidation)
+(require 'appkit-projection)
 (require 'appkit-chatbuf)
 (require 'appkit-chat-history)
 (require 'appkit-chat-completion)
