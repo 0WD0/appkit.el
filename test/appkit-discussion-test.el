@@ -81,6 +81,28 @@
                             (line-end-position))))
     (should (equal "   " (get-text-property (point) 'line-prefix)))))
 
+(ert-deftest appkit-discussion-entry-draws-a-chain-connector-in-the-prefix ()
+  "A continue connector should occupy the prefix instead of indenting."
+  (with-temp-buffer
+    (appkit-discussion-insert-entry
+     (appkit-discussion-entry-create
+      :key "ancestor"
+      :parent-key "root"
+      :depth 0
+      :connector 'continue
+      :heading "Ancestor"
+      :body-inserter
+      (lambda (prefix properties)
+        (appkit-ui-insert-prefixed-lines
+         prefix "body" :properties properties)))
+     :avatar-p nil)
+    (goto-char (point-min))
+    (should (string-prefix-p "│ " (get-text-property (point) 'line-prefix)))
+    (forward-line 1)
+    (should (string-prefix-p "│ " (get-text-property (point) 'line-prefix)))
+    (forward-line 1)
+    (should (string-prefix-p "│ " (get-text-property (point) 'line-prefix)))))
+
 (ert-deftest appkit-discussion-entry-requires-parent-for-nesting ()
   (with-temp-buffer
     (should-error
