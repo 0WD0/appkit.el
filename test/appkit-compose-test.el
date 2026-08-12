@@ -39,8 +39,8 @@
       (should (equal (appkit-compose-body) "hello"))
       (should (string-match-p "hello" (appkit-compose-display-string))))))
 
-(ert-deftest appkit-compose-refresh-renders-empty-attachment-section ()
-  "An attachment section should retain its empty state without client chrome."
+(ert-deftest appkit-compose-refresh-omits-empty-attachment-section ()
+  "An empty attachment section should not occupy the composer frame."
   (with-temp-buffer
     (appkit-compose-mode)
     (appkit-compose-setup
@@ -52,10 +52,28 @@
     (goto-char (appkit-compose-body-start-position))
     (insert "draft")
     (appkit-compose-add-item)
-    (should (string-match-p "Media" (appkit-compose-display-string)))
-    (should (string-match-p "No media attached"
-                            (appkit-compose-display-string)))
+    (should-not (string-match-p "Media" (appkit-compose-display-string)))
+    (should-not (string-match-p "No media attached"
+                                (appkit-compose-display-string)))
     (should (equal (appkit-compose-bodies) '("draft" "")))))
+
+(ert-deftest appkit-compose-frame-keeps-header-footer-and-prompt-apart ()
+  "Header, footer, and prompt must not concatenate into one line."
+  (with-temp-buffer
+    (appkit-compose-mode)
+    (appkit-compose-setup
+     :context-function (lambda () "Context")
+     :attachments-function
+     (lambda ()
+       (list :title "Media"
+             :items (list (list :label "photo.png"))))
+     :footer-function (lambda () "Send / Cancel"))
+    (let ((display (appkit-compose-display-string)))
+      (should (string-match-p "Context\n\n" display))
+      (should (string-match-p "Media\n" display))
+      (should (string-match-p "Send / Cancel\n\n>>> " display))
+      (should-not (string-match-p "ContextMedia" display))
+      (should-not (string-match-p "Cancel>>>" display)))))
 
 (ert-deftest appkit-compose-setup-rejects-non-callable-callbacks ()
   "Compose setup should reject malformed client callbacks immediately."
