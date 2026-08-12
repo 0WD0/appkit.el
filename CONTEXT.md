@@ -5,11 +5,11 @@ Appkit provides protocol-neutral runtime and presentation primitives for statefu
 ## Language
 
 **Compose surface**:
-A standalone editable surface for preparing one outbound social item, including its context, status, attachments, and one or more ordered editable parts. Generated chrome is overlay presentation; buffer text is only the editable bodies and fixed part dividers.
+A standalone chatbuf used to prepare one outbound social item. Committed draft items are generated timeline rows; the trailing composer holds the current uncommitted or in-edit part.
 _Avoid_: Post form, toot form, note form
 
 **Compose part**:
-One editable body on a compose surface, with optional generated title and attachments.
+One draft item on a compose surface. Committed parts are rendered; the current part is edited in the composer.
 _Avoid_: Tweet, note, thread item
 
 **Status field**:
