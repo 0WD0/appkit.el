@@ -4,33 +4,37 @@
 
 ;;; Commentary:
 
-;; Provide a protocol-neutral standalone compose buffer.  Clients supply
-;; context, status fields, attachment records, and transport actions; Appkit
-;; owns the editable-body boundary, generated presentation invariants, and
-;; in-flight submit presentation.  A surface may contain one or more ordered
-;; editable parts.  Generated chrome lives in overlays so it cannot enter
-;; undo or shift body positions.  Clients own protocol progress values and
-;; cancel hooks.
+;; Provide a protocol-neutral compose surface on top of chatbuf.  Committed
+;; draft items are generated timeline rows.  The trailing composer holds the
+;; current uncommitted or in-edit part.  Clients supply context, status
+;; fields, attachment records, and transport actions.  Appkit owns the
+;; render/edit split, prompt/input boundary, and in-flight submit
+;; presentation.
 
 ;;; Code:
 
 (require 'cl-lib)
 (require 'subr-x)
+(require 'appkit-chat-timeline)
+(require 'appkit-chatbuf)
+(require 'appkit-core)
 
-(defconst appkit-compose--divider "\n\n"
-  "Fixed read-only separator kept between editable compose parts.")
+(appkit-define-app-kind appkit-compose)
 
-(defconst appkit-compose--divider-properties
-  '(read-only t
-    rear-nonsticky (read-only)
-    field appkit-compose-divider)
-  "Text properties for the in-buffer part divider.")
+(defvar-local appkit-compose--items nil
+  "Committed compose items as plists with `:id' and `:text'.")
 
-(defvar-local appkit-compose--parts nil
-  "Editable compose parts as plists with `:start', `:end', and `:overlay'.")
+(defvar-local appkit-compose--input-item nil
+  "Item plist for the current composer input, or nil.")
 
-(defvar-local appkit-compose--footer-overlay nil
-  "Overlay that displays generated compose footer text.")
+(defvar-local appkit-compose--editing nil
+  "Index of the committed item loaded into the composer, or nil.")
+
+(defvar-local appkit-compose--serial 0
+  "Serial used to assign stable compose item identifiers.")
+
+(defvar-local appkit-compose--owned-app nil
+  "Appkit app started for this compose buffer, or nil when the client owns it.")
 
 (defvar-local appkit-compose--pending-bodies nil
   "Body strings consumed by the next `appkit-compose-refresh', or nil.")
@@ -126,6 +130,7 @@ abort transport.  Signal an error when a submit is already in flight."
                                "Submitting...")
                     :progress (appkit-compose--normalize-progress progress)
                     :cancel-function cancel-function))
+  (force-mode-line-update)
   appkit-compose--submit)
 
 (cl-defun appkit-compose-update-submit
@@ -151,6 +156,7 @@ current values.  Signal an error when the surface is idle."
              cancel-function))
     (setf (plist-get appkit-compose--submit :cancel-function)
           cancel-function))
+  (force-mode-line-update)
   appkit-compose--submit)
 
 (defun appkit-compose-finish-submit ()
@@ -159,6 +165,7 @@ current values.  Signal an error when the surface is idle."
 Return the previous session plist, or nil when the surface was idle."
   (let ((submit appkit-compose--submit))
     (setq-local appkit-compose--submit nil)
+    (force-mode-line-update)
     submit))
 
 (defun appkit-compose-cancel-submit ()
@@ -177,28 +184,9 @@ without a cancel function."
       (user-error "Wait for the current submit to finish"))
      (t
       (setf (plist-get submit :state) 'cancelling)
+      (force-mode-line-update)
       (funcall (plist-get submit :cancel-function))
       t))))
-
-(defun appkit-compose--clear-marker (marker)
-  "Detach MARKER when it is a marker."
-  (when (markerp marker)
-    (set-marker marker nil)))
-
-(defun appkit-compose--delete-overlay (overlay)
-  "Delete OVERLAY when it is an overlay."
-  (when (overlayp overlay)
-    (delete-overlay overlay)))
-
-(defun appkit-compose--clear-parts ()
-  "Detach every compose part marker and overlay."
-  (dolist (part appkit-compose--parts)
-    (appkit-compose--clear-marker (plist-get part :start))
-    (appkit-compose--clear-marker (plist-get part :end))
-    (appkit-compose--delete-overlay (plist-get part :overlay)))
-  (setq-local appkit-compose--parts nil)
-  (appkit-compose--delete-overlay appkit-compose--footer-overlay)
-  (setq-local appkit-compose--footer-overlay nil))
 
 (defun appkit-compose--callback-value (function)
   "Call FUNCTION when callable, returning nil when it is nil."
@@ -206,41 +194,6 @@ without a cancel function."
     (unless (functionp function)
       (error "Appkit compose callback is not callable: %S" function))
     (funcall function)))
-
-(defvar appkit-compose-overlay-map
-  (let ((map (make-sparse-keymap)))
-    (define-key map [mouse-1] #'appkit-compose-invoke-overlay-action)
-    (define-key map [mouse-2] #'appkit-compose-invoke-overlay-action)
-    map)
-  "Keymap used by clickable compose overlay chrome.")
-
-(defun appkit-compose-invoke-overlay-action (event)
-  "Invoke the compose overlay action at mouse EVENT."
-  (interactive "e")
-  (let* ((start (event-start event))
-         (spec (posn-string start))
-         (action (if (consp spec)
-                     (get-text-property (cdr spec)
-                                        'appkit-compose-action
-                                        (car spec))
-                   (get-text-property (posn-point start)
-                                      'appkit-compose-action))))
-    (unless (functionp action)
-      (user-error "No compose action at click"))
-    (funcall action)))
-
-(defun appkit-compose--action-string (text action &optional help-echo face)
-  "Return TEXT that invokes ACTION when clicked.
-
-HELP-ECHO and FACE are optional presentation properties."
-  (let ((properties (list 'keymap appkit-compose-overlay-map
-                          'appkit-compose-action action
-                          'mouse-face 'highlight)))
-    (when help-echo
-      (setq properties (append (list 'help-echo help-echo) properties)))
-    (when face
-      (setq properties (append (list 'face face) properties)))
-    (apply #'propertize text properties)))
 
 (defun appkit-compose--field-text (field)
   "Return display text for status FIELD."
@@ -262,13 +215,19 @@ HELP-ECHO and FACE are optional presentation properties."
         (help-echo (plist-get field :help-echo)))
     (when (and action (not (functionp action)))
       (error "Appkit compose status field action is not callable: %S" field))
-    (cond
-     (action (appkit-compose--action-string text action help-echo face))
-     (face (propertize text 'face face))
-     (t text))))
+    (let ((map (and action (make-sparse-keymap))))
+      (when action
+        (define-key map [header-line down-mouse-1] #'ignore)
+        (define-key map [header-line mouse-1]
+                    (lambda () (interactive) (funcall action))))
+      (apply #'propertize text
+             (append (and face (list 'face face))
+                     (and help-echo (list 'help-echo help-echo))
+                     (and map (list 'local-map map
+                                    'mouse-face 'mode-line-highlight)))))))
 
 (defun appkit-compose--status-fields-string (fields)
-  "Return generated status FIELDS as one action-capable line."
+  "Return generated status FIELDS as one line."
   (when fields
     (let ((pieces '())
           (index 0))
@@ -277,7 +236,7 @@ HELP-ECHO and FACE are optional presentation properties."
           (push "   " pieces))
         (push (appkit-compose--status-field-string field) pieces)
         (setq index (1+ index)))
-      (concat (apply #'concat (nreverse pieces)) "\n"))))
+      (apply #'concat (nreverse pieces)))))
 
 (defun appkit-compose--attachment-string (attachment)
   "Return the generated string for one ATTACHMENT row."
@@ -289,17 +248,9 @@ HELP-ECHO and FACE are optional presentation properties."
          (description-label (or (plist-get attachment :description-label)
                                 "Description"))
          (state (plist-get attachment :state))
-         (action (plist-get attachment :action))
-         (object (if (plist-member attachment :object)
-                     (plist-get attachment :object)
-                   attachment))
-         (help-echo (plist-get attachment :help-echo))
          (text "  "))
     (unless (stringp label)
       (error "Appkit compose attachment label must be a string: %S"
-             attachment))
-    (when (and action (not (functionp action)))
-      (error "Appkit compose attachment action is not callable: %S"
              attachment))
     (when preview
       (setq text (concat text (propertize " " 'display preview
@@ -312,11 +263,7 @@ HELP-ECHO and FACE are optional presentation properties."
     (when (and (stringp state)
                (not (string-empty-p state)))
       (setq text (concat text (format "  [%s]" state))))
-    (setq text (concat text "\n"))
-    (if action
-        (appkit-compose--action-string
-         text (lambda () (funcall action object)) help-echo)
-      text)))
+    (concat text "\n")))
 
 (defun appkit-compose--attachments-string (section)
   "Return generated attachment SECTION text.
@@ -337,117 +284,194 @@ SECTION is a plist with `:title', `:items', and optional `:empty-label'."
                 (mapconcat #'appkit-compose--attachment-string items "")
               (concat empty-label "\n")))))
 
-(defun appkit-compose--header-string (context fields)
-  "Return generated header text for CONTEXT and status FIELDS."
-  (let ((field-text (appkit-compose--status-fields-string fields)))
-    (when (or context field-text)
-      (concat (or context "")
-              (when (and context field-text) "\n")
-              (or field-text "")
-              "\n"))))
+(defun appkit-compose--copy-item (item)
+  "Return a shallow copy of ITEM."
+  (copy-sequence (or item (list :attachments nil))))
 
-(defun appkit-compose--part-chrome-string (part &optional header)
-  "Return generated chrome for PART, optionally prefixed by HEADER."
-  (let ((title (plist-get part :title))
-        (attachments (plist-get part :attachments)))
-    (concat
-     (or header "")
-     (when (and (stringp title) (not (string-empty-p title)))
-       (if (string-suffix-p "\n" title) title (concat title "\n")))
-     (when attachments
-       (appkit-compose--attachments-string attachments))
-     (when (or (and (stringp title) (not (string-empty-p title)))
-               attachments)
-       "\n"))))
+(defun appkit-compose--ensure-item-id (item)
+  "Return ITEM with a stable `:id' assigned when missing."
+  (if (plist-get item :id)
+      item
+    (setq-local appkit-compose--serial (1+ appkit-compose--serial))
+    (plist-put (appkit-compose--copy-item item)
+               :id appkit-compose--serial)))
 
-(defun appkit-compose--part-body (part)
-  "Return the editable text stored in PART."
-  (let ((start (plist-get part :start))
-        (end (plist-get part :end)))
-    (if (and (markerp start) (markerp end))
-        (buffer-substring-no-properties start end)
-      "")))
+(defun appkit-compose--input-text ()
+  "Return the current composer input without text properties."
+  (if (appkit-chatbuf-input-start-position)
+      (substring-no-properties (or (appkit-chatbuf-input-string) ""))
+    ""))
+
+(defun appkit-compose--merge-input (item)
+  "Return ITEM with composer input text and current input metadata."
+  (let ((merged (appkit-compose--ensure-item-id
+                 (appkit-compose--copy-item
+                  (or appkit-compose--input-item item)))))
+    (plist-put merged :text (appkit-compose--input-text))))
+
+(defun appkit-compose-body ()
+  "Return the current editable compose body without text properties."
+  (appkit-compose--input-text))
+
+(defun appkit-compose-body-region-bounds ()
+  "Return the editable compose body bounds, or nil."
+  (appkit-chatbuf-input-region-bounds))
+
+(defun appkit-compose-body-start-position ()
+  "Return the start position of the editable compose body, or nil."
+  (appkit-chatbuf-input-start-position))
+
+(defun appkit-compose-body-end-position ()
+  "Return the end position of the editable compose body, or nil."
+  (cdr (appkit-chatbuf-input-region-bounds)))
 
 (defun appkit-compose-bodies ()
-  "Return every editable compose body without text properties."
-  (cond
-   (appkit-compose--pending-bodies
-    (copy-sequence appkit-compose--pending-bodies))
-   (appkit-compose--parts
-    (mapcar #'appkit-compose--part-body appkit-compose--parts))
-   (t
-    (list (buffer-substring-no-properties (point-min) (point-max))))))
+  "Return every compose body, including the live composer input."
+  (if appkit-compose--pending-bodies
+      (copy-sequence appkit-compose--pending-bodies)
+    (let ((texts (mapcar (lambda (item)
+                           (or (plist-get item :text) ""))
+                         appkit-compose--items))
+          (input (appkit-compose-body)))
+      (cond
+       ((integerp appkit-compose--editing)
+        (setf (nth appkit-compose--editing texts) input)
+        texts)
+       ((or (not (string-empty-p input))
+            (null texts))
+        (append texts (list input)))
+       (t texts)))))
+
+(defun appkit-compose-set-items (items)
+  "Replace compose items with ITEMS and load the last into the composer.
+
+ITEMS is a list of plists.  Each item may include `:text' and other
+client metadata such as `:attachments'."
+  (unless (listp items)
+    (error "Appkit compose items must be a list: %S" items))
+  (let* ((copies (mapcar (lambda (item)
+                           (appkit-compose--ensure-item-id
+                            (appkit-compose--copy-item item)))
+                         (or items (list (list :text "" :attachments nil)))))
+         (last (car (last copies)))
+         (committed (butlast copies)))
+    (setq-local appkit-compose--items committed
+                appkit-compose--input-item last
+                appkit-compose--editing nil
+                appkit-compose--pending-bodies nil)
+    (appkit-chatbuf-init-state)
+    (appkit-chatbuf-input-state-set (or (plist-get last :text) ""))
+    (when (appkit-chatbuf-input-start-position)
+      (appkit-chatbuf-input-set-text (or (plist-get last :text) "")))
+    (appkit-compose-refresh)
+    (appkit-compose-items)))
 
 (defun appkit-compose-set-bodies (bodies)
-  "Use BODIES as the editable text on the next compose refresh.
+  "Use BODIES as committed items plus the trailing composer input.
 
-BODIES must be a list of strings.  Call `appkit-compose-refresh' after
-changing the part list so the pending bodies are applied."
+BODIES must be a list of strings.  Every body except the last becomes a
+rendered draft row.  The last body is loaded into the composer."
   (unless (and (listp bodies)
                (cl-every #'stringp bodies))
     (error "Appkit compose bodies must be a list of strings: %S" bodies))
   (setq-local appkit-compose--pending-bodies (copy-sequence bodies)))
 
+(defun appkit-compose-items ()
+  "Return compose items aligned with `appkit-compose-bodies'.
+
+Committed rows keep their stored metadata.  The live composer input is
+merged into the edited item, or appended as a new item."
+  (let ((texts (appkit-compose-bodies))
+        (index 0)
+        items)
+    (dolist (text texts)
+      (let ((item
+             (cond
+              ((eq index appkit-compose--editing)
+               (appkit-compose--merge-input
+                (nth index appkit-compose--items)))
+              ((< index (length appkit-compose--items))
+               (plist-put
+                (appkit-compose--copy-item
+                 (nth index appkit-compose--items))
+                :text text))
+              (t
+               (appkit-compose--merge-input
+                appkit-compose--input-item)))))
+        (push item items))
+      (setq index (1+ index)))
+    (nreverse items)))
+
+(defun appkit-compose--apply-pending-bodies ()
+  "Apply `appkit-compose--pending-bodies' when it is set."
+  (when appkit-compose--pending-bodies
+    (let* ((bodies (copy-sequence appkit-compose--pending-bodies))
+           (last (if bodies (car (last bodies)) ""))
+           (committed (if bodies (butlast bodies) '())))
+      (setq-local appkit-compose--pending-bodies nil
+                  appkit-compose--editing nil
+                  appkit-compose--input-item (list :attachments nil)
+                  appkit-compose--items
+                  (mapcar (lambda (text)
+                            (appkit-compose--ensure-item-id
+                             (list :text text :attachments nil)))
+                          committed))
+      (appkit-chatbuf-init-state)
+      (appkit-chatbuf-input-state-set last)
+      (when (appkit-chatbuf-input-start-position)
+        (appkit-chatbuf-input-set-text last)))))
+
+(defun appkit-compose-item-index-at-point ()
+  "Return the committed item index at point, or nil."
+  (get-text-property (point) 'appkit-compose-item-index))
+
 (defun appkit-compose-current-part-index ()
   "Return the 0-based compose part that contains point, or nil."
-  (when appkit-compose--parts
-    (let ((pos (point))
-          (index 0)
-          found)
-      (dolist (part appkit-compose--parts)
-        (let* ((start (and (markerp (plist-get part :start))
-                           (marker-position (plist-get part :start))))
-               (end (and (markerp (plist-get part :end))
-                         (marker-position (plist-get part :end)))))
-          (when (and start end (>= pos start) (<= pos end))
-            (setq found index)))
-        (setq index (1+ index)))
-      (cond
-       (found found)
-       ((< pos (marker-position
-                (plist-get (car appkit-compose--parts) :start)))
-        0)
-       (t (1- (length appkit-compose--parts)))))))
+  (cond
+   ((appkit-chatbuf-point-in-input-p)
+    (or appkit-compose--editing (length appkit-compose--items)))
+   ((appkit-compose-item-index-at-point))
+   (appkit-compose--items
+    (1- (length appkit-compose--items)))
+   (t 0)))
 
-(defun appkit-compose--current-part ()
-  "Return the compose part plist containing point, or the first part."
-  (or (and appkit-compose--parts
-           (nth (or (appkit-compose-current-part-index) 0)
-                appkit-compose--parts))
-      (car appkit-compose--parts)))
+(defun appkit-compose-current-item ()
+  "Return the compose item plist for the current part."
+  (let ((index (or (appkit-compose-current-part-index) 0)))
+    (cond
+     ((and (integerp appkit-compose--editing)
+           (or (appkit-chatbuf-point-in-input-p)
+               (eq index appkit-compose--editing)))
+      (appkit-compose--merge-input
+       (nth appkit-compose--editing appkit-compose--items)))
+     ((and (integerp index)
+           (< index (length appkit-compose--items)))
+      (nth index appkit-compose--items))
+     (t
+      (appkit-compose--merge-input appkit-compose--input-item)))))
 
-(defun appkit-compose-body-region-bounds ()
-  "Return the editable compose body bounds for the current part, or nil."
-  (when-let* ((part (appkit-compose--current-part))
-              (start (plist-get part :start))
-              (end (plist-get part :end))
-              ((markerp start))
-              ((markerp end)))
-    (cons (marker-position start) (marker-position end))))
-
-(defun appkit-compose-body-start-position ()
-  "Return the start position of the current editable compose body, or nil."
-  (car (appkit-compose-body-region-bounds)))
-
-(defun appkit-compose-body-end-position ()
-  "Return the end position of the current editable compose body, or nil."
-  (cdr (appkit-compose-body-region-bounds)))
-
-(defun appkit-compose-body ()
-  "Return the current editable compose body without text properties."
-  (if-let* ((bounds (appkit-compose-body-region-bounds)))
-      (buffer-substring-no-properties (car bounds) (cdr bounds))
-    ""))
-
-(defun appkit-compose-goto-part (index)
-  "Move point to the start of compose part INDEX."
-  (when-let* ((part (nth index appkit-compose--parts))
-              (start (plist-get part :start))
-              ((markerp start)))
-    (goto-char start)))
+(defun appkit-compose-update-current-item (item)
+  "Replace the current compose item with ITEM."
+  (let ((index (or (appkit-compose-current-part-index) 0))
+        (updated (appkit-compose--copy-item item)))
+    (cond
+     ((and (integerp appkit-compose--editing)
+           (or (appkit-chatbuf-point-in-input-p)
+               (eq index appkit-compose--editing)))
+      (setq-local appkit-compose--input-item updated)
+      (setf (nth appkit-compose--editing appkit-compose--items)
+            (appkit-compose--merge-input updated)))
+     ((and (integerp index)
+           (< index (length appkit-compose--items)))
+      (setf (nth index appkit-compose--items)
+            (appkit-compose--ensure-item-id updated)))
+     (t
+      (setq-local appkit-compose--input-item updated)))
+    (appkit-compose-refresh)
+    updated))
 
 (defun appkit-compose--resolved-parts ()
-  "Return the client part list, defaulting to one attachments-only part."
+  "Return the client part list aligned with committed items."
   (if appkit-compose-parts-function
       (let ((parts (appkit-compose--callback-value
                     appkit-compose-parts-function)))
@@ -458,166 +482,258 @@ changing the part list so the pending bodies are applied."
                 (appkit-compose--callback-value
                  appkit-compose-attachments-function)))))
 
-(defun appkit-compose--align-bodies (bodies count)
-  "Return BODIES padded or truncated to COUNT strings."
-  (let ((aligned (copy-sequence (or bodies '())))
-        (needed count))
-    (while (< (length aligned) needed)
-      (setq aligned (append aligned (list ""))))
-    (when (> (length aligned) needed)
-      (setq aligned (cl-subseq aligned 0 needed)))
-    aligned))
+(defun appkit-compose--print-row (row)
+  "Insert one generated compose ROW."
+  (let* ((item (appkit-chat-timeline-row-payload row))
+         (index (plist-get item :index))
+         (part (plist-get item :part))
+         (editing (eq index appkit-compose--editing))
+         (title (or (plist-get part :title)
+                    (format "Part %d" (1+ index))))
+         (text (or (plist-get item :text) ""))
+         (start (point)))
+    (insert (if (string-suffix-p "\n" title) title (concat title "\n")))
+    (when editing
+      (insert (propertize "(editing in composer)\n" 'face 'shadow)))
+    (insert text)
+    (unless (or (string-empty-p text)
+                (string-suffix-p "\n" text))
+      (insert "\n"))
+    (when-let* ((attachments (plist-get part :attachments)))
+      (insert (appkit-compose--attachments-string attachments)))
+    (add-text-properties
+     start (point)
+     (list 'appkit-compose-item-index index
+           'appkit-compose-item-id (plist-get item :id)))))
 
-(defun appkit-compose--insert-divider ()
-  "Insert the read-only separator between compose parts."
-  (let ((start (point)))
-    (insert appkit-compose--divider)
-    (add-text-properties start (point)
-                         appkit-compose--divider-properties)))
-
-(defun appkit-compose--rebuild-skeleton (bodies)
-  "Replace buffer text with editable BODIES and fixed dividers.
-
-This discards undo history because body positions are rewritten."
-  (let ((inhibit-read-only t)
-        (inhibit-modification-hooks t)
-        (buffer-undo-list t)
-        (modified (buffer-modified-p))
+(defun appkit-compose--timeline-entries ()
+  "Return timeline entries for committed compose items."
+  (let ((parts (appkit-compose--resolved-parts))
         (index 0)
-        rendered)
-    (appkit-compose--clear-parts)
-    (erase-buffer)
-    (dolist (body bodies)
-      (when (> index 0)
-        (when-let* ((previous (car rendered))
-                    (end (plist-get previous :end)))
-          (set-marker-insertion-type end nil)
-          (appkit-compose--insert-divider)
-          (set-marker-insertion-type end t)))
-      (let ((start (copy-marker (point) nil)))
-        (insert (or body ""))
-        (push (list :start start
-                    :end (copy-marker (point) t))
-              rendered))
+        entries)
+    (dolist (item appkit-compose--items)
+      (let ((part (or (nth index parts) (car (last parts)))))
+        (push (list :id (plist-get item :id)
+                    :index index
+                    :text (if (eq index appkit-compose--editing)
+                              (appkit-compose--input-text)
+                            (or (plist-get item :text) ""))
+                    :part part)
+              entries))
       (setq index (1+ index)))
-    (setq-local appkit-compose--parts (nreverse rendered))
-    (set-buffer-modified-p modified))
-  (setq buffer-undo-list nil))
+    (nreverse entries)))
 
-(defun appkit-compose--make-overlay (start end front-advance rear-advance)
-  "Return an overlay from START to END.
-
-FRONT-ADVANCE and REAR-ADVANCE are passed to `make-overlay'."
-  (make-overlay start end nil front-advance rear-advance))
-
-(defun appkit-compose--refresh-overlays (spec-parts)
-  "Rebuild generated overlays from SPEC-PARTS without touching bodies."
-  (let* ((context (appkit-compose--callback-value
-                   appkit-compose-context-function))
-         (fields (appkit-compose--callback-value
+(defun appkit-compose--header-line ()
+  "Return the current compose header-line string."
+  (let* ((fields (appkit-compose--callback-value
                   appkit-compose-status-fields-function))
-         (footer (appkit-compose--callback-value
-                  appkit-compose-footer-function))
-         (header (appkit-compose--header-string context fields))
-         (index 0))
+         (text (appkit-compose--status-fields-string fields)))
     (when (and fields (not (listp fields)))
       (error "Appkit compose status fields must be a list: %S" fields))
-    (dolist (part appkit-compose--parts)
-      (appkit-compose--delete-overlay (plist-get part :overlay))
-      (let* ((start (plist-get part :start))
-             (overlay (appkit-compose--make-overlay start start nil nil))
-             (chrome (appkit-compose--part-chrome-string
-                      (nth index spec-parts)
-                      (and (zerop index) header))))
-        (when (and chrome (not (string-empty-p chrome)))
-          (overlay-put overlay 'before-string chrome))
-        (overlay-put overlay 'evaporate nil)
-        (setf (nth index appkit-compose--parts)
-              (list :start start
-                    :end (plist-get part :end)
-                    :overlay overlay)))
-      (setq index (1+ index)))
-    (appkit-compose--delete-overlay appkit-compose--footer-overlay)
-    (setq-local appkit-compose--footer-overlay
-                (and footer
-                     (not (string-empty-p footer))
-                     (let ((overlay (appkit-compose--make-overlay
-                                     (point-max) (point-max) t t)))
-                       (overlay-put overlay 'after-string
-                                    (concat "\n\n" footer))
-                       (overlay-put overlay 'evaporate nil)
-                       overlay)))))
+    (or text "")))
 
-(defun appkit-compose-display-string ()
-  "Return visible compose text, including overlay chrome.
+(defun appkit-compose--current-attachments ()
+  "Return the attachment section for the current composer item, or nil."
+  (let* ((parts (appkit-compose--resolved-parts))
+         (index (or (appkit-compose-current-part-index) 0))
+         (part (or (nth index parts) (car (last parts)))))
+    (or (plist-get part :attachments)
+        (appkit-compose--callback-value
+         appkit-compose-attachments-function))))
 
-Use this when a test or command needs the generated context, status,
-attachments, and footer together with the editable bodies.  The buffer
-string itself contains only bodies and fixed part dividers."
-  (let ((chunks '()))
-    (dolist (part appkit-compose--parts)
-      (when-let* ((overlay (plist-get part :overlay))
-                  (text (overlay-get overlay 'before-string)))
-        (push text chunks))
-      (push (appkit-compose--part-body part) chunks)
-      (when (cdr (memq part appkit-compose--parts))
-        (push appkit-compose--divider chunks)))
-    (when-let* ((overlay appkit-compose--footer-overlay)
-                (text (overlay-get overlay 'after-string)))
-      (push text chunks))
-    (apply #'concat (nreverse chunks))))
+(defun appkit-compose--frame-footer ()
+  "Return generated footer text placed above the composer."
+  (concat
+   (when-let* ((section (appkit-compose--current-attachments)))
+     (appkit-compose--attachments-string section))
+   (or (appkit-compose--callback-value appkit-compose-footer-function)
+       "")))
 
-(defun appkit-compose-call-display-action (needle)
-  "Call the overlay action whose visible text contains NEEDLE.
+(defun appkit-compose--bind-composer ()
+  "Install the trailing compose prompt and input when missing."
+  (appkit-chatbuf-bind-input-region
+   :visible-p t
+   :prompt ">>> "
+   :input-text (if appkit-compose--pending-bodies
+                   (or (car (last appkit-compose--pending-bodies)) "")
+                 (or (appkit-chatbuf-input-state)
+                     (appkit-compose--input-text)
+                     ""))))
 
-NEEDLE is a fixed string compared against the current display text.
-Signal an error when no matching action exists."
-  (let* ((text (appkit-compose-display-string))
-         (start (and (stringp needle)
-                     (string-match (regexp-quote needle) text)))
-         (action (and start
-                      (get-text-property start 'appkit-compose-action text))))
-    (unless (functionp action)
-      (error "No compose display action matches %S" needle))
-    (funcall action)))
+(defun appkit-compose--ensure-view (app)
+  "Attach a compose view to the current buffer and return it.
+
+APP is an optional live appkit app.  When it is nil, start a buffer-owned
+compose app."
+  (or (and (appkit-view-live-p (appkit-current-view))
+           (appkit-current-view))
+      (let* ((owned (null app))
+             (target (or app
+                         (appkit-start-app
+                          'appkit-compose
+                          :id (intern (format "compose-%x"
+                                              (sxhash-eq (current-buffer))))))))
+        (when owned
+          (setq-local appkit-compose--owned-app target))
+        (appkit-attach-view
+         :app target
+         :id (list 'compose (intern (format "b%x" (sxhash-eq (current-buffer)))))
+         :mode major-mode
+         :sync-function #'appkit-compose-refresh))))
+
+(defun appkit-compose--stop-owned-app ()
+  "Stop the compose app started for the current buffer, if any."
+  (when (appkit-app-live-p appkit-compose--owned-app)
+    (appkit-stop-app appkit-compose--owned-app))
+  (setq-local appkit-compose--owned-app nil))
 
 (defun appkit-compose-refresh ()
-  "Refresh generated compose presentation while preserving bodies.
+  "Refresh generated compose presentation without rewriting composer input."
+  (appkit-compose--ensure-view nil)
+  (when (and (not appkit-compose--pending-bodies)
+             (not appkit-compose--items)
+             (not (appkit-chat-timeline-live-p))
+             (> (buffer-size) 0))
+    (setq-local appkit-compose--pending-bodies
+                (list (buffer-substring-no-properties (point-min)
+                                                      (point-max)))))
+  (appkit-compose--apply-pending-bodies)
+  (unless (appkit-chat-timeline-live-p)
+    (appkit-chat-timeline-ensure
+     :printer #'appkit-compose--print-row
+     :anchor-property 'appkit-compose-item-id))
+  (appkit-chat-timeline-sync
+   (appkit-chat-timeline-project
+    (appkit-compose--timeline-entries)
+    (lambda (entry)
+      (plist-get entry :id))))
+  (condition-case _
+      (appkit-chat-timeline-set-frame
+       (or (appkit-compose--callback-value appkit-compose-context-function) "")
+       (appkit-compose--frame-footer)
+       :bind-input-function #'appkit-compose--bind-composer
+       :composer-visible-p t)
+    (error
+     (appkit-compose--bind-composer)))
+  (setq-local header-line-format '(:eval (appkit-compose--header-line)))
+  (force-mode-line-update)
+  (appkit-compose-body-region-bounds))
 
-Generated chrome is applied as overlays.  Editable bodies stay in the
-buffer so ordinary Emacs undo remains valid.  The skeleton is rewritten
-only when the part count changes or pending bodies are applied."
-  (let* ((spec-parts (appkit-compose--resolved-parts))
-         (bodies (appkit-compose--align-bodies
-                  (appkit-compose-bodies) (length spec-parts)))
-         (old-index (or (appkit-compose-current-part-index) 0))
-         (old-start (appkit-compose-body-start-position))
-         (point-offset (if (and old-start (>= (point) old-start))
-                           (- (point) old-start)
-                         0))
-         (rebuild (or appkit-compose--pending-bodies
-                      (/= (length appkit-compose--parts)
-                          (length spec-parts)))))
-    (setq-local appkit-compose--pending-bodies nil)
-    (when rebuild
-      (appkit-compose--rebuild-skeleton bodies))
-    (appkit-compose--refresh-overlays spec-parts)
-    (when-let* ((part (nth (min old-index
-                                (1- (length appkit-compose--parts)))
-                           appkit-compose--parts))
-                (start (plist-get part :start)))
-      (goto-char (+ (marker-position start)
-                    (min point-offset
-                         (length (nth (min old-index
-                                           (1- (length bodies)))
-                                      bodies))))))
-    (appkit-compose-body-region-bounds)))
+(defun appkit-compose-display-string ()
+  "Return visible compose text, including header-line chrome."
+  (concat (appkit-compose--header-line)
+          (unless (string-empty-p (appkit-compose--header-line))
+            "\n")
+          (buffer-substring-no-properties (point-min) (point-max))))
+
+(defun appkit-compose-goto-part (index)
+  "Load compose part INDEX into the composer, or focus new input."
+  (when (and (integerp appkit-compose--editing)
+             (not (eq appkit-compose--editing index)))
+    (appkit-compose--write-back-edit))
+  (cond
+   ((and (integerp index)
+         (< index (length appkit-compose--items)))
+    (let ((item (nth index appkit-compose--items)))
+      (setq-local appkit-compose--editing index
+                  appkit-compose--input-item (appkit-compose--copy-item item))
+      (appkit-chatbuf-input-set-text (or (plist-get item :text) ""))
+      (appkit-compose-refresh)
+      (goto-char (appkit-chatbuf-input-start-position))))
+   (t
+    (setq-local appkit-compose--editing nil
+                appkit-compose--input-item
+                (or appkit-compose--input-item (list :attachments nil)))
+    (appkit-compose-refresh)
+    (goto-char (or (appkit-chatbuf-input-start-position) (point-max))))))
+
+(defun appkit-compose--write-back-edit ()
+  "Store the current composer input back into the edited item."
+  (when (integerp appkit-compose--editing)
+    (setf (nth appkit-compose--editing appkit-compose--items)
+          (appkit-compose--merge-input
+           (nth appkit-compose--editing appkit-compose--items)))
+    (setq-local appkit-compose--editing nil
+                appkit-compose--input-item (list :attachments nil))))
+
+(defun appkit-compose--flush-input ()
+  "Write back an edit or commit nonempty composer input as a new item."
+  (cond
+   ((integerp appkit-compose--editing)
+    (appkit-compose--write-back-edit))
+   ((not (string-empty-p (appkit-compose--input-text)))
+    (setq-local appkit-compose--items
+                (append appkit-compose--items
+                        (list (appkit-compose--merge-input
+                               appkit-compose--input-item))))
+    (setq-local appkit-compose--input-item (list :attachments nil))
+    (appkit-chatbuf-input-set-text ""))))
+
+(defun appkit-compose-add-item ()
+  "Insert an empty draft item after the current part and edit it."
+  (interactive)
+  (let ((index (1+ (or (appkit-compose-current-part-index) 0))))
+    (appkit-compose--flush-input)
+    (setq index (min index (length appkit-compose--items)))
+    (let ((item (appkit-compose--ensure-item-id
+                 (list :text "" :attachments nil))))
+      (setq-local appkit-compose--items
+                  (append (cl-subseq appkit-compose--items 0 index)
+                          (list item)
+                          (cl-subseq appkit-compose--items index)))
+      (appkit-compose-goto-part index)
+      (set-buffer-modified-p t)
+      index)))
+
+(defun appkit-compose-drop-item (&optional index)
+  "Remove compose item INDEX, or the current part when INDEX is nil."
+  (interactive)
+  (let ((target (or index (appkit-compose-current-part-index))))
+    (unless (and (integerp target)
+                 (< target (length appkit-compose--items)))
+      (user-error "No committed compose item to remove"))
+    (when (eq target appkit-compose--editing)
+      (setq-local appkit-compose--editing nil
+                  appkit-compose--input-item (list :attachments nil))
+      (appkit-chatbuf-input-set-text ""))
+    (when (and (integerp appkit-compose--editing)
+               (> appkit-compose--editing target))
+      (setq-local appkit-compose--editing (1- appkit-compose--editing)))
+    (setq-local appkit-compose--items
+                (append (cl-subseq appkit-compose--items 0 target)
+                        (cl-subseq appkit-compose--items (1+ target))))
+    (appkit-compose-refresh)
+    (appkit-compose-goto-part (min target (max 0 (1- (length appkit-compose--items)))))
+    (set-buffer-modified-p t)
+    target))
+
+(defun appkit-compose-edit-at-point ()
+  "Load the committed compose item at point into the composer."
+  (interactive)
+  (if-let* ((index (appkit-compose-item-index-at-point)))
+      (appkit-compose-goto-part index)
+    (user-error "No compose item at point")))
+
+(defvar appkit-compose-timeline-mode-map
+  (let ((map (make-sparse-keymap)))
+    (define-key map (kbd "RET") #'appkit-compose-edit-at-point)
+    (define-key map (kbd "e") #'appkit-compose-edit-at-point)
+    (define-key map (kbd "d") #'appkit-compose-drop-item)
+    map)
+  "Keymap for generated compose draft rows.")
+
+(define-minor-mode appkit-compose-timeline-mode
+  "Enable keys on generated compose draft rows."
+  :init-value nil
+  :lighter nil
+  :keymap appkit-compose-timeline-mode-map)
 
 (cl-defun appkit-compose-setup
-    (&key context-function status-fields-function attachments-function
+    (&key app context-function status-fields-function attachments-function
           parts-function footer-function)
   "Configure generated compose callbacks and refresh the current buffer.
 
+APP is an optional live appkit app that should own the compose view.
 CONTEXT-FUNCTION returns a context string.  STATUS-FIELDS-FUNCTION returns a
 list of field plists with `:label', `:value', and optional `:action'.
 ATTACHMENTS-FUNCTION returns an attachment-section plist for a single part.
@@ -639,19 +755,25 @@ all protocol semantics and may be nil when a section is not needed."
               appkit-compose-attachments-function attachments-function
               appkit-compose-parts-function parts-function
               appkit-compose-footer-function footer-function)
+  (appkit-compose--ensure-view app)
+  (appkit-chatbuf-use-timeline-mode #'appkit-compose-timeline-mode)
   (appkit-compose-refresh))
 
-(define-derived-mode appkit-compose-mode text-mode "Appkit-Compose"
-  "Major mode for a standalone protocol-neutral compose surface.
+(define-derived-mode appkit-compose-mode appkit-chatbuf-mode "Appkit-Compose"
+  "Major mode for a standalone compose surface on a chatbuf.
 
-Buffer text is only the editable bodies and fixed part dividers.
-Generated context, status, attachments, and footer are overlays."
-  (setq-local header-line-format nil)
+Committed draft items are generated timeline rows.  The trailing
+composer holds the current uncommitted or in-edit body."
+  (setq-local header-line-format '(:eval (appkit-compose--header-line)))
   (setq-local require-final-newline nil)
+  (buffer-enable-undo)
   (setq-local appkit-compose--submit nil)
-  (setq-local appkit-compose--parts nil)
-  (setq-local appkit-compose--footer-overlay nil)
-  (setq-local appkit-compose--pending-bodies nil))
+  (setq-local appkit-compose--items nil)
+  (setq-local appkit-compose--input-item (list :attachments nil))
+  (setq-local appkit-compose--editing nil)
+  (setq-local appkit-compose--serial 0)
+  (setq-local appkit-compose--pending-bodies nil)
+  (add-hook 'kill-buffer-hook #'appkit-compose--stop-owned-app nil t))
 
 (provide 'appkit-compose)
 
