@@ -266,23 +266,29 @@ without a cancel function."
     (concat text "\n")))
 
 (defun appkit-compose--attachments-string (section)
-  "Return generated attachment SECTION text.
+  "Return generated attachment SECTION text, or an empty string.
 
-SECTION is a plist with `:title', `:items', and optional `:empty-label'."
+SECTION is a plist with `:title' and `:items'.  An empty item list
+occupies no frame text."
   (unless (listp section)
     (error "Appkit compose attachment section must be a plist: %S" section))
   (let ((title (or (plist-get section :title) "Attachments"))
-        (items (plist-get section :items))
-        (empty-label (or (plist-get section :empty-label)
-                         "  No attachments.")))
+        (items (plist-get section :items)))
     (unless (stringp title)
       (error "Appkit compose attachment title must be a string: %S" section))
     (unless (listp items)
       (error "Appkit compose attachment items must be a list: %S" section))
-    (concat title "\n"
-            (if items
-                (mapconcat #'appkit-compose--attachment-string items "")
-              (concat empty-label "\n")))))
+    (if items
+        (concat title "\n"
+                (mapconcat #'appkit-compose--attachment-string items ""))
+      "")))
+
+(defun appkit-compose--ensure-newline (text)
+  "Return TEXT ending with a newline, or an empty string."
+  (cond
+   ((or (null text) (string-empty-p text)) "")
+   ((string-suffix-p "\n" text) text)
+   (t (concat text "\n"))))
 
 (defun appkit-compose--copy-item (item)
   "Return a shallow copy of ITEM."
@@ -488,11 +494,11 @@ merged into the edited item, or appended as a new item."
          (index (plist-get item :index))
          (part (plist-get item :part))
          (editing (eq index appkit-compose--editing))
-         (title (or (plist-get part :title)
-                    (format "Part %d" (1+ index))))
+         (title (plist-get part :title))
          (text (or (plist-get item :text) ""))
          (start (point)))
-    (insert (if (string-suffix-p "\n" title) title (concat title "\n")))
+    (when (and (stringp title) (not (string-empty-p title)))
+      (insert (appkit-compose--ensure-newline title)))
     (when editing
       (insert (propertize "(editing in composer)\n" 'face 'shadow)))
     (insert text)
@@ -541,13 +547,34 @@ merged into the edited item, or appended as a new item."
         (appkit-compose--callback-value
          appkit-compose-attachments-function))))
 
+(defun appkit-compose--frame-header ()
+  "Return generated header text placed above committed draft rows.
+
+A non-empty header ends with a blank line so it does not run into
+the first draft row, attachment footer, or prompt."
+  (let ((text (appkit-compose--ensure-newline
+               (appkit-compose--callback-value
+                appkit-compose-context-function))))
+    (if (string-empty-p text)
+        ""
+      (concat text "\n"))))
+
 (defun appkit-compose--frame-footer ()
-  "Return generated footer text placed above the composer."
-  (concat
-   (when-let* ((section (appkit-compose--current-attachments)))
-     (appkit-compose--attachments-string section))
-   (or (appkit-compose--callback-value appkit-compose-footer-function)
-       "")))
+  "Return generated footer text placed above the composer.
+
+A non-empty footer ends with a blank line so the prompt stays on its
+own line.  Chat timelines use EWOC `nosep', so clients cannot rely on
+automatic separators between header, footer, and prompt."
+  (let ((text (appkit-compose--ensure-newline
+               (concat
+                (when-let* ((section (appkit-compose--current-attachments)))
+                  (appkit-compose--attachments-string section))
+                (or (appkit-compose--callback-value
+                     appkit-compose-footer-function)
+                    "")))))
+    (if (string-empty-p text)
+        ""
+      (concat text "\n"))))
 
 (defun appkit-compose--bind-composer ()
   "Install the trailing compose prompt and input when missing."
@@ -609,7 +636,7 @@ compose app."
       (plist-get entry :id))))
   (condition-case _
       (appkit-chat-timeline-set-frame
-       (or (appkit-compose--callback-value appkit-compose-context-function) "")
+       (appkit-compose--frame-header)
        (appkit-compose--frame-footer)
        :bind-input-function #'appkit-compose--bind-composer
        :composer-visible-p t)
