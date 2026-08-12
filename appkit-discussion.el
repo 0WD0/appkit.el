@@ -136,39 +136,50 @@
     copy))
 
 (cl-defun appkit-discussion-insert-entry
-    (entry &key width avatar-pixel-size (indent-width 4) (separate-p t))
+    (entry &key width avatar-pixel-size (indent-width 4) (separate-p t)
+           (avatar-p t))
   "Insert one threaded discussion ENTRY and return its buffer span.
 
 WIDTH is the common right edge used by the timestamp.  AVATAR-PIXEL-SIZE
 defaults to a two-line chat avatar.  INDENT-WIDTH is multiplied by ENTRY's
-depth.  When SEPARATE-P is non-nil, append one blank line.
+depth.  AVATAR-P controls whether the shared two-line avatar prefix is
+reserved; when nil, only nesting indentation is applied.  When SEPARATE-P is
+non-nil, append one blank line.
 
 ENTRY's heading inserter is called with no arguments.  Its body inserter is
-called with the mutable body prefix state and the complete row properties."
+called with the mutable, display-only body prefix state and the complete row
+properties.  Body inserters should apply that state through Appkit prefix
+helpers instead of inserting it into buffer text."
   (appkit-discussion--validate-entry entry)
   (unless (and (integerp indent-width) (>= indent-width 0))
     (error "Appkit discussion indent width must be a non-negative integer"))
   (let* ((depth (or (appkit-discussion-entry-depth entry) 0))
          (indent (make-string (* depth indent-width) ?\s))
-         (pixel-size (or avatar-pixel-size
-                         (appkit-chat-avatar-two-line-pixel-size)))
-         (avatar-properties (appkit-discussion--avatar-properties entry))
+         (pixel-size (and avatar-p
+                          (or avatar-pixel-size
+                              (appkit-chat-avatar-two-line-pixel-size))))
+         (avatar-properties
+          (and avatar-p
+               (appkit-discussion--avatar-properties entry)))
          (avatar-prefixes
-          (appkit-chat-avatar-prefixes
-           (appkit-discussion-entry-avatar entry)
-           (or (appkit-discussion-entry-avatar-fallback entry) "@")
-           :pixel-size pixel-size
-           :resize t))
+          (and avatar-p
+               (appkit-chat-avatar-prefixes
+                (appkit-discussion-entry-avatar entry)
+                (or (appkit-discussion-entry-avatar-fallback entry) "@")
+                :pixel-size pixel-size
+                :resize t)))
          (header-prefix
           (concat indent
-                  (appkit-discussion--decorate-prefix
-                   (plist-get avatar-prefixes :header)
-                   avatar-properties)))
+                  (when avatar-prefixes
+                    (appkit-discussion--decorate-prefix
+                     (plist-get avatar-prefixes :header)
+                     avatar-properties))))
          (first-body-prefix
           (concat indent
-                  (appkit-discussion--decorate-prefix
-                   (plist-get avatar-prefixes :first-body)
-                   avatar-properties)))
+                  (when avatar-prefixes
+                    (appkit-discussion--decorate-prefix
+                     (plist-get avatar-prefixes :first-body)
+                     avatar-properties))))
          (rest-body-prefix
           (concat indent (or (plist-get avatar-prefixes :rest-body) "")))
          (body-prefix
