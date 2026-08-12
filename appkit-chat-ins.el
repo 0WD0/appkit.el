@@ -203,8 +203,8 @@ non-negative number."
     (played-seconds duration-seconds width)
   "Return a WIDTH-column voice-note progress bar.
 
-PLAYED-SECONDS is clamped to DURATION-SECONDS.  Unknown or zero durations
-produce an empty track."
+PLAYED-SECONDS is clamped to DURATION-SECONDS.  WIDTH is at least one column.
+Unknown or zero durations produce an empty track."
   (let* ((width (max 1 (or width 12)))
          (duration (and (numberp duration-seconds)
                         (> duration-seconds 0)
@@ -256,9 +256,10 @@ controls only the visual track width."
   "Insert one protocol-neutral interactive voice-note control.
 
 The backend supplies semantic STATE, DURATION-SECONDS, PLAYED-SECONDS, and an
-ACTION.  Appkit owns the control icon, progress track, duration formatting,
-click target, prefix, and styling.  STATUS-TEXT is optional presentation text
-for states such as preparation or failure.  Return the inserted span."
+ACTION.  Appkit owns the control icon, BAR-WIDTH progress track, duration
+formatting, click target, PREFIX, and FACE styling.  STATUS-TEXT is optional
+presentation text for states such as preparation or failure.  PROPERTIES and
+HELP-ECHO decorate the inserted span.  Return the inserted span."
   (appkit-chat-ins-insert-prefixed-line
    (appkit-chat-ins-voice-note-text
     :state state

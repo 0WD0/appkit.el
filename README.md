@@ -5,8 +5,9 @@
 
 - app sessions, buffer views, and owned timers/hooks/processes
 - owner-scoped keyed FIFO task queues with bounded concurrency
+- stable-key read-only projections with presentation dependency indexing,
+  coalesced invalidation, and semantic position preservation
 - explicit generated-content, property-only, and editable transactions
-- coalesced invalidation followed by one view-owned synchronization callback
 - stable-key EWOC reconciliation and independent semantic point/viewport
   restoration for every live window showing a view
 - a persistent chat composer, editable chat-buffer base mode, point-local
@@ -61,11 +62,12 @@ developed together:
 ```
 
 No consumer compatibility aliases are provided.  Shared code uses the
-`appkit-task-queue-*`, `appkit-chatbuf-*`, `appkit-chat-history-*`,
-`appkit-chat-timeline-*`, `appkit-ui-*`, `appkit-view-*`,
-`appkit-chat-completion-*`, `appkit-chat-ins-*`, `appkit-discussion-*`,
-`appkit-directory-*`, `appkit-name-color-*`, `appkit-evil-*`, and
-`appkit-media-*` namespaces directly.
+`appkit-task-queue-*`, `appkit-projection-*`,
+`appkit-chatbuf-*`, `appkit-chat-history-*`, `appkit-chat-timeline-*`,
+`appkit-ui-*`, `appkit-view-*`, `appkit-chat-completion-*`,
+`appkit-chat-ins-*`, `appkit-discussion-*`, `appkit-directory-*`,
+`appkit-name-color-*`, `appkit-evil-*`, and `appkit-media-*` namespaces
+directly.
 
 The shared task queue deduplicates equal keys across active and waiting work,
 starts tasks in FIFO order up to a live adjustable limit, and guards every
@@ -99,6 +101,14 @@ buffer, and gives the view a synchronization function.  External events update
 the client's canonical state and call `appkit-request-sync` with opaque
 entry/resource/part invalidations.  The synchronization function is the only
 event path that projects state back into generated buffer content.
+
+Read-only ordered views initialize one `appkit-projection` in the view engine,
+project client entries into rows with stable keys and opaque presentation
+dependencies, and synchronize those rows only from the view callback.  Appkit
+reconciles retained EWOC nodes, redraws rows affected by changed dependencies,
+updates the generated frame, and preserves semantic point and viewport state
+for every live window.  Clients continue to own source collections, paging,
+merge policy, status meaning, and row rendering.
 
 Client callbacks separate logical request settlement from presentation.  A
 request generation owns loading flags and tokens even if its original view was

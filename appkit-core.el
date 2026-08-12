@@ -54,8 +54,6 @@
   mode
   state
   engine
-  entry-index
-  resource-index
   request-table
   invalidations
   pending-events
@@ -397,8 +395,6 @@ SYNC-FUNCTION synchronizes invalidations for PARTS.  POSITION-POLICY controls
                :mode (or mode major-mode)
                :state state
                :engine nil
-               :entry-index (make-hash-table :test #'equal)
-               :resource-index (make-hash-table :test #'equal)
                :request-table (make-hash-table :test #'equal)
                :invalidations nil
                :pending-events nil
