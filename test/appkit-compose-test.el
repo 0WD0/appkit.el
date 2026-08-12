@@ -1,11 +1,11 @@
 ;;; appkit-compose-test.el --- Tests for appkit-compose -*- lexical-binding: t; -*-
 
-(require 'button)
+(require 'cl-lib)
 (require 'ert)
 (require 'appkit-compose)
 
 (ert-deftest appkit-compose-refresh-separates-body-and-generated-chrome ()
-  "Generated compose chrome must remain read-only around an editable body."
+  "Generated compose chrome must remain outside the editable body."
   (with-temp-buffer
     (appkit-compose-mode)
     (let (field-action attachment-action)
@@ -26,25 +26,27 @@
                            :action (lambda (object)
                                      (setq attachment-action object))))))
        :footer-function (lambda () "Send / Cancel"))
+      (should (equal (buffer-string) ""))
+      (should (string-match-p "Context" (appkit-compose-display-string)))
+      (should (string-match-p "Audience: Everyone"
+                              (appkit-compose-display-string)))
+      (should (string-match-p "photo.png" (appkit-compose-display-string)))
+      (should (string-match-p "Send / Cancel"
+                              (appkit-compose-display-string)))
       (goto-char (appkit-compose-body-start-position))
       (insert "hello")
       (should (equal (appkit-compose-body) "hello"))
-      (should (get-text-property (point-min) 'read-only))
+      (should (equal (buffer-string) "hello"))
       (should-not
        (get-text-property (appkit-compose-body-start-position) 'read-only))
-      (goto-char (point-min))
-      (search-forward "Audience: Everyone")
-      (button-activate (button-at (1- (point))))
+      (appkit-compose-call-display-action "Audience: Everyone")
       (should field-action)
-      (goto-char (point-min))
-      (search-forward "photo.png")
-      (button-activate (button-at (1- (point))))
+      (appkit-compose-call-display-action "photo.png")
       (should (eq attachment-action 'photo))
       (goto-char (+ (appkit-compose-body-start-position) 2))
       (appkit-compose-refresh)
       (should (= (point) (+ (appkit-compose-body-start-position) 2)))
-      (goto-char (1- (point-max)))
-      (should (get-text-property (point) 'read-only)))))
+      (should (equal (buffer-string) "hello")))))
 
 (ert-deftest appkit-compose-refresh-renders-empty-attachment-section ()
   "An attachment section should retain its empty state without client chrome."
@@ -56,11 +58,13 @@
        '(:title "Media"
          :items nil
          :empty-label "  No media attached.")))
-    (should (string-match-p "Media" (buffer-string)))
-    (should (string-match-p "No media attached" (buffer-string)))
+    (should (string-match-p "Media" (appkit-compose-display-string)))
+    (should (string-match-p "No media attached"
+                            (appkit-compose-display-string)))
     (goto-char (appkit-compose-body-start-position))
     (insert "draft")
-    (should (equal (appkit-compose-body) "draft"))))
+    (should (equal (appkit-compose-body) "draft"))
+    (should (equal (buffer-string) "draft"))))
 
 (ert-deftest appkit-compose-setup-rejects-non-callable-callbacks ()
   "Compose setup should reject malformed client callbacks immediately."
@@ -68,6 +72,100 @@
     (appkit-compose-mode)
     (should-error
      (appkit-compose-setup :context-function "not a function"))))
+
+(ert-deftest appkit-compose-submit-tracks-progress-and-cancel ()
+  "Compose submit state should be presentation-only and client-canceled."
+  (with-temp-buffer
+    (appkit-compose-mode)
+    (let (canceled)
+      (should-not (appkit-compose-submitting-p))
+      (should-not (appkit-compose-progress-text))
+      (should-not (appkit-compose-cancel-submit))
+      (appkit-compose-begin-submit
+       :label "Uploading video"
+       :progress 0.25
+       :cancel-function (lambda () (setq canceled t)))
+      (should (appkit-compose-submitting-p))
+      (should (string-match-p "Uploading video" (appkit-compose-progress-text)))
+      (should (string-match-p "25%" (appkit-compose-progress-text)))
+      (should-error (appkit-compose-begin-submit :label "again"))
+      (appkit-compose-update-submit :label "Uploading video" :progress 0.5)
+      (should (string-match-p "50%" (appkit-compose-progress-text)))
+      (should (appkit-compose-cancel-submit))
+      (should canceled)
+      (should (appkit-compose-submitting-p))
+      (should-error (appkit-compose-cancel-submit) :type 'user-error)
+      (appkit-compose-finish-submit)
+      (should-not (appkit-compose-submitting-p))
+      (should-not (appkit-compose-progress-text)))))
+
+(ert-deftest appkit-compose-cancel-submit-refuses-without-hook ()
+  "A submit without a cancel hook should refuse the cancel gesture."
+  (with-temp-buffer
+    (appkit-compose-mode)
+    (appkit-compose-begin-submit :label "Publishing")
+    (should-error (appkit-compose-cancel-submit) :type 'user-error)
+    (should (appkit-compose-submitting-p))
+    (appkit-compose-finish-submit)))
+
+(ert-deftest appkit-compose-progress-bar-fills-from-ratio ()
+  "The shared progress bar should stay a fixed width."
+  (should (equal (appkit-compose-progress-bar 0 10) "          "))
+  (should (equal (appkit-compose-progress-bar 0.5 10) "====>     "))
+  (should (equal (length (appkit-compose-progress-bar 1 10)) 10)))
+
+(ert-deftest appkit-compose-refresh-preserves-multiple-bodies ()
+  "A multi-part compose surface should keep each body on refresh."
+  (with-temp-buffer
+    (appkit-compose-mode)
+    (let ((count 2))
+      (appkit-compose-setup
+       :context-function (lambda () "Context")
+       :parts-function
+       (lambda ()
+         (cl-loop for index from 1 to count
+                  collect (list :title (format "Part %d" index)
+                                :attachments
+                                (list :title "Media"
+                                      :items nil
+                                      :empty-label "  None."))))
+       :footer-function (lambda () "Footer"))
+      (goto-char (appkit-compose-body-start-position))
+      (insert "first")
+      (setq count 3)
+      (appkit-compose-set-bodies (append (appkit-compose-bodies) (list "")))
+      (appkit-compose-refresh)
+      (should (equal (appkit-compose-bodies) '("first" "" "")))
+      (appkit-compose-goto-part 1)
+      (insert "second")
+      (appkit-compose-refresh)
+      (should (equal (appkit-compose-bodies) '("first" "second" "")))
+      (should (eq (appkit-compose-current-part-index) 1))
+      (should (equal (appkit-compose-body) "second"))
+      (should (equal (buffer-string) "first\n\nsecond\n\n")))))
+
+(ert-deftest appkit-compose-undo-does-not-duplicate-after-chrome-refresh ()
+  "Chrome refresh must not record undo or rewrite editable bodies."
+  (with-temp-buffer
+    (appkit-compose-mode)
+    (appkit-compose-setup
+     :status-fields-function
+     (lambda ()
+       (list (list :label "Length"
+                   :value (format "%d" (length (appkit-compose-body))))))
+     :footer-function (lambda () "Footer"))
+    (goto-char (appkit-compose-body-start-position))
+    (insert "hello")
+    (undo-boundary)
+    (should (equal (buffer-string) "hello"))
+    (appkit-compose-refresh)
+    (should (equal (buffer-string) "hello"))
+    (should (string-match-p "Length: 5" (appkit-compose-display-string)))
+    (undo)
+    (should (equal (appkit-compose-body) ""))
+    (should (equal (buffer-string) ""))
+    (should-not (string-match-p "hellohello"
+                                (appkit-compose-display-string)))))
 
 (provide 'appkit-compose-test)
 
