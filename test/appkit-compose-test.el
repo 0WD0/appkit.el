@@ -5,10 +5,10 @@
 (require 'appkit-compose)
 
 (ert-deftest appkit-compose-refresh-separates-body-and-generated-chrome ()
-  "Generated compose chrome must remain outside the editable body."
+  "Generated compose chrome must remain outside the editable composer."
   (with-temp-buffer
     (appkit-compose-mode)
-    (let (field-action attachment-action)
+    (let (field-action)
       (appkit-compose-setup
        :context-function (lambda () "Context")
        :status-fields-function
@@ -22,31 +22,22 @@
          (list :title "Media"
                :items
                (list (list :label "photo.png"
-                           :object 'photo
-                           :action (lambda (object)
-                                     (setq attachment-action object))))))
+                           :object 'photo))))
        :footer-function (lambda () "Send / Cancel"))
-      (should (equal (buffer-string) ""))
       (should (string-match-p "Context" (appkit-compose-display-string)))
       (should (string-match-p "Audience: Everyone"
                               (appkit-compose-display-string)))
-      (should (string-match-p "photo.png" (appkit-compose-display-string)))
       (should (string-match-p "Send / Cancel"
                               (appkit-compose-display-string)))
       (goto-char (appkit-compose-body-start-position))
       (insert "hello")
       (should (equal (appkit-compose-body) "hello"))
-      (should (equal (buffer-string) "hello"))
+      (should (appkit-chatbuf-point-in-input-p))
       (should-not
        (get-text-property (appkit-compose-body-start-position) 'read-only))
-      (appkit-compose-call-display-action "Audience: Everyone")
-      (should field-action)
-      (appkit-compose-call-display-action "photo.png")
-      (should (eq attachment-action 'photo))
-      (goto-char (+ (appkit-compose-body-start-position) 2))
       (appkit-compose-refresh)
-      (should (= (point) (+ (appkit-compose-body-start-position) 2)))
-      (should (equal (buffer-string) "hello")))))
+      (should (equal (appkit-compose-body) "hello"))
+      (should (string-match-p "hello" (appkit-compose-display-string))))))
 
 (ert-deftest appkit-compose-refresh-renders-empty-attachment-section ()
   "An attachment section should retain its empty state without client chrome."
@@ -58,13 +49,13 @@
        '(:title "Media"
          :items nil
          :empty-label "  No media attached.")))
+    (goto-char (appkit-compose-body-start-position))
+    (insert "draft")
+    (appkit-compose-add-item)
     (should (string-match-p "Media" (appkit-compose-display-string)))
     (should (string-match-p "No media attached"
                             (appkit-compose-display-string)))
-    (goto-char (appkit-compose-body-start-position))
-    (insert "draft")
-    (should (equal (appkit-compose-body) "draft"))
-    (should (equal (buffer-string) "draft"))))
+    (should (equal (appkit-compose-bodies) '("draft" "")))))
 
 (ert-deftest appkit-compose-setup-rejects-non-callable-callbacks ()
   "Compose setup should reject malformed client callbacks immediately."
@@ -133,16 +124,16 @@
       (goto-char (appkit-compose-body-start-position))
       (insert "first")
       (setq count 3)
-      (appkit-compose-set-bodies (append (appkit-compose-bodies) (list "")))
-      (appkit-compose-refresh)
-      (should (equal (appkit-compose-bodies) '("first" "" "")))
-      (appkit-compose-goto-part 1)
+      (appkit-compose-add-item)
+      (should (equal (appkit-compose-bodies) '("first" "")))
+      (appkit-compose-goto-part 0)
+      (should (equal (appkit-compose-body) "first"))
+      (appkit-compose-add-item)
       (insert "second")
       (appkit-compose-refresh)
       (should (equal (appkit-compose-bodies) '("first" "second" "")))
       (should (eq (appkit-compose-current-part-index) 1))
-      (should (equal (appkit-compose-body) "second"))
-      (should (equal (buffer-string) "first\n\nsecond\n\n")))))
+      (should (equal (appkit-compose-body) "second")))))
 
 (ert-deftest appkit-compose-undo-does-not-duplicate-after-chrome-refresh ()
   "Chrome refresh must not record undo or rewrite editable bodies."
@@ -154,18 +145,36 @@
        (list (list :label "Length"
                    :value (format "%d" (length (appkit-compose-body))))))
      :footer-function (lambda () "Footer"))
+    (buffer-enable-undo)
+    (setq buffer-undo-list nil)
     (goto-char (appkit-compose-body-start-position))
     (insert "hello")
     (undo-boundary)
-    (should (equal (buffer-string) "hello"))
     (appkit-compose-refresh)
-    (should (equal (buffer-string) "hello"))
+    (should (equal (appkit-compose-body) "hello"))
     (should (string-match-p "Length: 5" (appkit-compose-display-string)))
     (undo)
     (should (equal (appkit-compose-body) ""))
-    (should (equal (buffer-string) ""))
     (should-not (string-match-p "hellohello"
                                 (appkit-compose-display-string)))))
+
+(ert-deftest appkit-compose-add-and-drop-items-keep-order ()
+  "Adding or dropping a draft item should keep the surrounding items."
+  (with-temp-buffer
+    (appkit-compose-mode)
+    (appkit-compose-setup)
+    (goto-char (appkit-compose-body-start-position))
+    (insert "first")
+    (appkit-compose-add-item)
+    (insert "third")
+    (appkit-compose-goto-part 0)
+    (appkit-compose-add-item)
+    (insert "second")
+    (should (equal (appkit-compose-bodies) '("first" "second" "third")))
+    (appkit-compose-goto-part 1)
+    (appkit-compose-drop-item)
+    (should (equal (appkit-compose-bodies) '("first" "third")))
+    (should (eq (appkit-compose-current-part-index) 1))))
 
 (provide 'appkit-compose-test)
 

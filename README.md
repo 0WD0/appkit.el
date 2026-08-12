@@ -9,7 +9,7 @@
   coalesced invalidation, and semantic position preservation
 - explicit generated-content, property-only, and editable transactions
 - stable-key EWOC reconciliation and independent semantic point/viewport
-- standalone compose surfaces with overlay-hosted generated chrome, editable bodies that keep ordinary Emacs undo, one or more ordered parts, and an in-flight submit session with optional progress text and a client cancel hook
+- standalone compose surfaces on chatbuf: committed draft items are generated timeline rows, the trailing composer holds the current part, status fields use the header line, and an in-flight submit session still carries optional progress text and a client cancel hook
 - a persistent chat composer, editable chat-buffer base mode, point-local timeline command switching, shared rich completion substrate, projected
 - Unicode emoji completion, continuous history-window state, and keyed chat timeline projection
 - reusable prefix, one-line/list-view, mode-line, two-line avatar,
