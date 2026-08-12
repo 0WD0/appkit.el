@@ -55,6 +55,32 @@
     (should (string-prefix-p
              "   R " (get-text-property (point) 'line-prefix)))))
 
+(ert-deftest appkit-discussion-entry-can-omit-avatar-prefix ()
+  "An entry without a shared avatar reserves only nesting indentation."
+  (with-temp-buffer
+    (appkit-discussion-insert-entry
+     (appkit-discussion-entry-create
+      :key "plain"
+      :parent-key "root"
+      :depth 1
+      :heading "Plain"
+      :body-inserter
+      (lambda (prefix properties)
+        (appkit-ui-insert-prefixed-lines
+         prefix "body" :properties properties)))
+     :avatar-p nil
+     :indent-width 3)
+    (goto-char (point-min))
+    (should (equal "Plain" (buffer-substring-no-properties
+                             (line-beginning-position)
+                             (line-end-position))))
+    (should (equal "   " (get-text-property (point) 'line-prefix)))
+    (forward-line 1)
+    (should (equal "body" (buffer-substring-no-properties
+                            (line-beginning-position)
+                            (line-end-position))))
+    (should (equal "   " (get-text-property (point) 'line-prefix)))))
+
 (ert-deftest appkit-discussion-entry-requires-parent-for-nesting ()
   (with-temp-buffer
     (should-error
