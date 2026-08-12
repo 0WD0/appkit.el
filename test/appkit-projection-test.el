@@ -118,6 +118,29 @@
       (should (equal '(a) (appkit-projection-keys view)))
       (should (string-prefix-p "Settled\n" (buffer-string))))))
 
+(ert-deftest appkit-projection-no-separator-preserves-printer-layout ()
+  (appkit-test-with-view
+    (let ((view (appkit-current-view))
+          (prints (make-hash-table :test #'equal)))
+      (appkit-projection-ensure
+       view
+       :printer (appkit-projection-test--printer prints)
+       :anchor-property 'test-projection-key
+       :no-separator-p t)
+      (appkit-projection-sync
+       view (list (appkit-projection-test--row 'a "A")))
+      (should (equal "a:A:plain\n" (buffer-string)))
+      (should-error
+       (appkit-projection-ensure view :no-separator-p nil)))))
+
+(ert-deftest appkit-projection-invalid-printer-keeps-buffer-content ()
+  (appkit-test-with-view
+    (let ((view (appkit-current-view))
+          (inhibit-read-only t))
+      (insert "retained")
+      (should-error (appkit-projection-ensure view))
+      (should (equal "retained" (buffer-string))))))
+
 (ert-deftest appkit-projection-preserves-each-window-position ()
   (save-window-excursion
     (appkit-test-with-view
