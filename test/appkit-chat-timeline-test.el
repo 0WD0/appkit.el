@@ -250,6 +250,16 @@
                  "a:A:plain\nb:B:plain\nfooter\n>>> draft\\'"
                  (buffer-string)))))))
 
+(ert-deftest appkit-chat-timeline-invalid-printer-keeps-composer ()
+  (appkit-test-with-view
+    (appkit-chatbuf-init-state 8)
+    (appkit-chatbuf-bind-input-region
+     :visible-p t :prompt ">>> " :input-text "draft")
+    (let ((before (buffer-string)))
+      (should-error (appkit-chat-timeline-ensure))
+      (should (equal before (buffer-string)))
+      (should (equal "draft" (appkit-chatbuf-input-string))))))
+
 (ert-deftest appkit-chat-timeline-failed-mutation-reprotects-generated-content ()
   (appkit-test-with-view
     (let ((prints (make-hash-table :test #'equal)))
