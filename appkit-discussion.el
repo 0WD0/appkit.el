@@ -4,8 +4,8 @@
 
 ;; Protocol-neutral rows for post details, comments, reviews, and similar
 ;; threaded discussions.  Applications own identities, bodies, and actions;
-;; Appkit owns the shared avatar, nesting, heading, footer, and navigation
-;; geometry.
+;; Appkit owns the shared avatar, nesting, chain connector, heading, footer,
+;; and navigation geometry.
 
 ;;; Code:
 
@@ -34,6 +34,7 @@
   body-inserter
   footer
   footer-face
+  connector
   properties)
 
 (defconst appkit-discussion-key-property 'appkit-discussion-key
@@ -44,6 +45,11 @@
 
 (defconst appkit-discussion-depth-property 'appkit-discussion-depth
   "Text property carrying a discussion entry's visual nesting depth.")
+
+(defface appkit-discussion-connector
+  '((t :inherit shadow))
+  "Face used for a linear discussion chain connector."
+  :group 'appkit)
 
 (defun appkit-discussion--validate-entry (entry)
   "Require a complete, internally consistent discussion ENTRY."
@@ -57,6 +63,9 @@
     (when (and (> depth 0)
                (null (appkit-discussion-entry-parent-key entry)))
       (error "Nested Appkit discussion entry has no parent key")))
+  (let ((connector (appkit-discussion-entry-connector entry)))
+    (unless (memq connector '(nil continue end))
+      (error "Appkit discussion connector must be nil, continue, or end")))
   (when (and (appkit-discussion-entry-heading entry)
              (appkit-discussion-entry-heading-inserter entry))
     (error "Appkit discussion entry has two heading sources"))
@@ -135,6 +144,20 @@
       (add-text-properties 0 (length copy) properties copy))
     copy))
 
+(defun appkit-discussion--connector-column (connector line)
+  "Return the prefix column for CONNECTOR on LINE.
+
+CONNECTOR is nil, `continue', or `end'.  LINE is `header',
+`first-body', `rest-body', or `separator'."
+  (cond
+   ((eq connector 'continue)
+    (propertize "│ " 'face 'appkit-discussion-connector))
+   ((and (eq connector 'end)
+         (memq line '(header first-body)))
+    (propertize "│ " 'face 'appkit-discussion-connector))
+   ((eq connector 'end) "  ")
+   (t "")))
+
 (cl-defun appkit-discussion-insert-entry
     (entry &key width avatar-pixel-size (indent-width 4) (separate-p t)
            (avatar-p t))
@@ -143,8 +166,10 @@
 WIDTH is the common right edge used by the timestamp.  AVATAR-PIXEL-SIZE
 defaults to a two-line chat avatar.  INDENT-WIDTH is multiplied by ENTRY's
 depth.  AVATAR-P controls whether the shared two-line avatar prefix is
-reserved; when nil, only nesting indentation is applied.  When SEPARATE-P is
-non-nil, append one blank line.
+reserved; when nil, only nesting indentation is applied.  ENTRY's connector
+is nil, `continue', or `end': a continue mark draws a prefix spine through
+the row and its trailing separator, and an end mark stops that spine after
+the heading.  When SEPARATE-P is non-nil, append one blank line.
 
 ENTRY's heading inserter is called with no arguments.  Its body inserter is
 called with the mutable, display-only body prefix state and the complete row
@@ -154,6 +179,7 @@ helpers instead of inserting it into buffer text."
   (unless (and (integerp indent-width) (>= indent-width 0))
     (error "Appkit discussion indent width must be a non-negative integer"))
   (let* ((depth (or (appkit-discussion-entry-depth entry) 0))
+         (connector (appkit-discussion-entry-connector entry))
          (indent (make-string (* depth indent-width) ?\s))
          (pixel-size (and avatar-p
                           (or avatar-pixel-size
@@ -169,19 +195,23 @@ helpers instead of inserting it into buffer text."
                 :pixel-size pixel-size
                 :resize t)))
          (header-prefix
-          (concat indent
+          (concat (appkit-discussion--connector-column connector 'header)
+                  indent
                   (when avatar-prefixes
                     (appkit-discussion--decorate-prefix
                      (plist-get avatar-prefixes :header)
                      avatar-properties))))
          (first-body-prefix
-          (concat indent
+          (concat (appkit-discussion--connector-column connector 'first-body)
+                  indent
                   (when avatar-prefixes
                     (appkit-discussion--decorate-prefix
                      (plist-get avatar-prefixes :first-body)
                      avatar-properties))))
          (rest-body-prefix
-          (concat indent (or (plist-get avatar-prefixes :rest-body) "")))
+          (concat (appkit-discussion--connector-column connector 'rest-body)
+                  indent
+                  (or (plist-get avatar-prefixes :rest-body) "")))
          (body-prefix
           (appkit-ui-make-prefix-state first-body-prefix rest-body-prefix))
          (properties (appkit-discussion--entry-properties entry))
@@ -217,7 +247,12 @@ helpers instead of inserting it into buffer text."
          :face (or (appkit-discussion-entry-footer-face entry) 'shadow)
          :properties properties)))
     (when separate-p
-      (insert "\n"))
+      (let ((separator-start (point)))
+        (insert "\n")
+        (when (eq connector 'continue)
+          (appkit-ui-apply-line-prefix
+           separator-start (point)
+           (appkit-discussion--connector-column connector 'separator)))))
     (add-text-properties start (point) properties)
     (cons start (point))))
 
