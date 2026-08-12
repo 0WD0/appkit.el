@@ -27,3 +27,11 @@ _Avoid_: File upload, HTTP request, job
 **Client semantics**:
 The protocol-specific meaning, validation, capability, persistence, transport, and error behavior supplied by a consuming package.
 _Avoid_: Appkit policy
+
+**Discussion connector**:
+A prefix mark that continues or ends a linear discussion chain without changing nesting depth.
+_Avoid_: Indent, tree depth, thread line
+
+**Discussion depth**:
+The visual nesting of a tree reply under its parent.
+_Avoid_: Ancestor position, chain index
