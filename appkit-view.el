@@ -12,6 +12,8 @@
 
 (require 'cl-lib)
 (require 'subr-x)
+(require 'appkit-core)
+(require 'appkit-invalidation)
 (require 'appkit-position)
 (require 'appkit-ui)
 
@@ -302,6 +304,27 @@ column widths.  FACE supplies the font metrics used for measurement."
             (appkit-view--elide-string-to-pixels text pixel-limit face)))
       (appkit-view-elide-string text limit face))))
 
+(defun appkit-view-display-window (&optional buffer)
+  "Return the canonical live window displaying BUFFER.
+
+The selected window wins when it displays BUFFER.  Otherwise return the
+widest live window displaying BUFFER across all frames.  Width-sensitive
+generated content is shared by every window showing one buffer, so callers
+must use this one presentation window consistently."
+  (let* ((buffer (or buffer (current-buffer)))
+         (selected (selected-window)))
+    (if (and (window-live-p selected)
+             (eq (window-buffer selected) buffer))
+        selected
+      (let ((best nil)
+            (best-width -1))
+        (dolist (window (get-buffer-window-list buffer nil t) best)
+          (when (window-live-p window)
+            (let ((width (window-width window 'remap)))
+              (when (> width best-width)
+                (setq best window
+                      best-width width)))))))))
+
 (defun appkit-view-default-line-pixel-height ()
   "Return the default-face line height for the current buffer in pixels.
 
@@ -310,7 +333,7 @@ that window's point.  Row printers, including asynchronous media redraws,
 must keep point at the insertion position, so this function restores
 point after the query."
   (save-excursion
-    (let ((window (get-buffer-window (current-buffer) t)))
+    (let ((window (appkit-view-display-window)))
       (max 1
            (or (and window
                     (eq (window-buffer window) (current-buffer))
@@ -321,7 +344,7 @@ point after the query."
 
 (defun appkit-view--chars-xwidth (columns &optional window)
   "Return pixel width for COLUMNS using WINDOW metrics."
-  (let* ((win (or window (get-buffer-window (current-buffer) t)))
+  (let* ((win (or window (appkit-view-display-window)))
          (frame (and (window-live-p win)
                      (window-frame win)))
          (buffer (and (window-live-p win) (window-buffer win)))
@@ -380,7 +403,7 @@ point after the query."
 (defun appkit-view-move-to-column (column)
   "Insert one absolute align-to spacer for COLUMN."
   (let* ((target (max 0 (or column 0)))
-         (win (get-buffer-window (current-buffer) t))
+         (win (appkit-view-display-window))
          (frame (and (window-live-p win) (window-frame win))))
     (let ((align-to (if (and (frame-live-p frame)
                              (display-graphic-p frame))
@@ -394,7 +417,7 @@ point after the query."
 The result follows face remapping/text scaling, includes window margins,
 subtracts display line-number width, and reserves MARGIN-COLUMNS at the right
 edge.  Return nil when WINDOW is not live."
-  (let ((win (or window (get-buffer-window (current-buffer) t))))
+  (let ((win (or window (appkit-view-display-window))))
     (when (window-live-p win)
       (let* ((margins (window-margins win))
              (width (+ (window-width win 'remap)
@@ -417,6 +440,89 @@ edge.  Return nil when WINDOW is not live."
         (max 1 (- width
                   (max 0 (or margin-columns 0))
                   line-number-columns))))))
+
+(defvar-local appkit-view--responsive-geometry-p nil
+  "Non-nil when the current view observes display geometry.")
+
+(defvar-local appkit-view--responsive-window nil
+  "Canonical window used for the last responsive geometry measurement.")
+
+(defvar-local appkit-view--responsive-width nil
+  "Last responsive presentation width measured in columns.")
+
+(defun appkit-view-responsive-width (&optional margin-columns)
+  "Return the responsive presentation width less MARGIN-COLUMNS.
+
+The width is measured in columns for `appkit-view-display-window'.  A hidden
+buffer uses its current `fill-column' until a live window can be measured."
+  (when appkit-view--responsive-geometry-p
+    (unless appkit-view--responsive-width
+      (when-let* ((window (appkit-view-display-window))
+                  (width (appkit-view-window-fill-column window)))
+        (setq-local appkit-view--responsive-window window
+                    appkit-view--responsive-width width)))
+    (when (numberp appkit-view--responsive-width)
+      (max 1
+           (- appkit-view--responsive-width
+              (max 0 (or margin-columns 0)))))))
+
+(cl-defun appkit-view-refresh-responsive-geometry (&key force)
+  "Remeasure the current view's responsive geometry.
+
+Request one position-preserving `geometry' synchronization when the canonical
+window or its usable width changed.  FORCE requests synchronization even when
+both values compare equal, for display metric changes such as text scaling.
+Return the measured width in columns, or nil when no live view is displayed."
+  (when appkit-view--responsive-geometry-p
+    (when-let* ((view (appkit-current-view))
+                ((appkit-view-live-p view))
+                (window (appkit-view-display-window))
+                (width (appkit-view-window-fill-column window)))
+      (let ((changed
+             (or (not (eq window appkit-view--responsive-window))
+                 (not (equal width appkit-view--responsive-width)))))
+        (setq-local appkit-view--responsive-window window
+                    appkit-view--responsive-width width)
+        (when (or force changed)
+          (appkit-request-sync view :part 'geometry :position t))
+        width))))
+
+(defun appkit-view--on-window-geometry-change (_window)
+  "Refresh responsive geometry after one displaying window changes."
+  (appkit-view-refresh-responsive-geometry))
+
+(defun appkit-view--on-display-geometry-change ()
+  "Refresh responsive geometry after buffer display metrics change."
+  (appkit-view-refresh-responsive-geometry :force t))
+
+(defun appkit-view-enable-responsive-geometry (view)
+  "Make VIEW observe its canonical display geometry.
+
+Appkit owns canonical-window selection, width measurement, and coalesced
+`geometry' invalidation.  The client sync function owns the resulting
+presentation update."
+  (unless (appkit-view-live-p view)
+    (error "Cannot enable responsive geometry for a dead Appkit view"))
+  (with-current-buffer (appkit-view-buffer view)
+    (unless (eq view (appkit-current-view))
+      (error "Cannot enable geometry for a detached Appkit view"))
+    (setq-local appkit-view--responsive-geometry-p t)
+    (unless appkit-view--responsive-width
+      (when-let* ((window (appkit-view-display-window)))
+        (setq-local appkit-view--responsive-window window))
+      (setq-local appkit-view--responsive-width
+                  (or (appkit-view-window-fill-column
+                       appkit-view--responsive-window)
+                      fill-column)))
+    (add-hook 'window-size-change-functions
+              #'appkit-view--on-window-geometry-change nil t)
+    (add-hook 'window-selection-change-functions
+              #'appkit-view--on-window-geometry-change nil t)
+    (add-hook 'display-line-numbers-mode-hook
+              #'appkit-view--on-display-geometry-change nil t)
+    (add-hook 'text-scale-mode-hook
+              #'appkit-view--on-display-geometry-change nil t))
+  view)
 
 (defun appkit-view-one-line-column-widths (content-width context-width-spec)
   "Split CONTENT-WIDTH using CONTEXT-WIDTH-SPEC for the context column."
