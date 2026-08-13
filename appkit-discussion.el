@@ -220,16 +220,37 @@ helpers instead of inserting it into buffer text."
     (if-let* ((inserter (appkit-discussion-entry-heading-inserter entry)))
         (funcall inserter)
       (insert (or (appkit-discussion-entry-heading entry) "")))
-    (let ((heading-end (point)))
+    (let* ((heading-end (point))
+           (time (appkit-discussion-entry-time entry))
+           (target-width (or width 80))
+           (prefix-width (string-width header-prefix))
+           (heading-limit
+            (and (stringp time)
+                 (not (string-empty-p time))
+                 (max 0 (- target-width prefix-width
+                           (string-width time) 2)))))
+      ;; Like Telega's message heading, reserve the trailing timestamp and
+      ;; elide an overlong heading instead of inserting a third avatar row.
+      (when (and heading-limit
+                 (> (string-width
+                     (buffer-substring header-start heading-end))
+                    heading-limit))
+        (let ((heading
+               (truncate-string-to-width
+                (buffer-substring header-start heading-end)
+                heading-limit nil nil "…")))
+          (delete-region header-start heading-end)
+          (insert heading)
+          (setq heading-end (point))))
       (when-let* ((face (appkit-discussion-entry-heading-face entry)))
         (add-face-text-property header-start heading-end face 'append))
-      (when-let* ((time (appkit-discussion-entry-time entry)))
-        (unless (string-empty-p time)
-          (appkit-chat-ins-insert-right-aligned-text
-           time (or width 80)
-           :face (or (appkit-discussion-entry-time-face entry) 'shadow)
-           :left-prefix-width (string-width header-prefix)
-           :right-margin-width 0)))
+      (when (and (stringp time) (not (string-empty-p time)))
+        (appkit-chat-ins-insert-right-aligned-text
+         time target-width
+         :face (or (appkit-discussion-entry-time-face entry) 'shadow)
+         :left-prefix-width prefix-width
+         :right-edge-margin 0
+         :overflow-newline-p nil))
       (insert "\n")
       (appkit-ui-apply-line-prefix
        header-start (point)

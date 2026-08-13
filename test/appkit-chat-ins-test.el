@@ -59,12 +59,12 @@
   (with-temp-buffer
     (insert "Alice")
     (let ((span (appkit-chat-ins-insert-right-aligned-text
-                 "12:34" 30 :right-margin-width 2)))
+                 "12:34" 30 :right-edge-margin 2)))
       (should (equal (buffer-substring-no-properties
                       (car span) (cdr span))
                      " 12:34"))
       (should (equal (get-text-property (car span) 'display)
-                     '(space :align-to (- right 7)))))))
+                     '(space :align-to (- right (7 . width))))))))
 
 (ert-deftest appkit-chat-ins-insert-right-aligned-text-reserves-future-prefix ()
   (with-temp-buffer
