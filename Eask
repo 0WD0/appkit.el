@@ -1,7 +1,7 @@
 ;; -*- mode: eask; lexical-binding: t -*-
 
 (package "appkit"
-         "0.2.12"
+         "0.2.13"
          "Runtime primitives for stateful buffer applications")
 
 (website-url "https://github.com/0WD0/appkit.el")
