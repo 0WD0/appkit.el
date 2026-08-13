@@ -28,6 +28,10 @@
     (should (string-match-p "Author replies" (buffer-string)))
     (should (string-match-p "first\nsecond\n3/5 replies" (buffer-string)))
     (goto-char (point-min))
+    (search-forward "12:34")
+    (should (equal (get-text-property (1- (match-beginning 0)) 'display)
+                   '(space :align-to (- right 5))))
+    (goto-char (point-min))
     (should (equal "reply-2" (appkit-discussion-key-at-point)))
     (should (equal "comment-1"
                    (get-text-property

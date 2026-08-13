@@ -228,7 +228,8 @@ helpers instead of inserting it into buffer text."
           (appkit-chat-ins-insert-right-aligned-text
            time (or width 80)
            :face (or (appkit-discussion-entry-time-face entry) 'shadow)
-           :left-prefix-width (string-width header-prefix))))
+           :left-prefix-width (string-width header-prefix)
+           :right-margin-width 0)))
       (insert "\n")
       (appkit-ui-apply-line-prefix
        header-start (point)
