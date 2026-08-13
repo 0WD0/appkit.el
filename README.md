@@ -109,6 +109,9 @@ reconciles retained EWOC nodes, redraws rows affected by changed dependencies,
 updates the generated frame, and preserves semantic point and viewport state
 for every live window.  Clients continue to own source collections, paging,
 merge policy, status meaning, and row rendering.
+Views with width-sensitive printers can explicitly enable responsive projection
+geometry; Appkit then redraws retained keys when the chosen window's usable
+columns, text scale, or line-number geometry changes.
 
 Client callbacks separate logical request settlement from presentation.  A
 request generation owns loading flags and tokens even if its original view was

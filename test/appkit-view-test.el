@@ -3,6 +3,7 @@
 (require 'ert)
 (require 'cl-lib)
 (require 'appkit-view)
+(require 'appkit-test-helper)
 
 (ert-deftest appkit-view-render-list-spec-renders-items-and-footer ()
   (with-temp-buffer
@@ -316,6 +317,90 @@
     (with-current-buffer buffer
       (let ((display-line-numbers-mode nil))
         (should (= (appkit-view-window-fill-column win 1) expected))))))
+
+(ert-deftest appkit-view-display-window-prefers-focus-then-widest ()
+  (save-window-excursion
+    (delete-other-windows)
+    (let* ((buffer (generate-new-buffer " *appkit-view-display*"))
+           (other-buffer (generate-new-buffer " *appkit-view-other*"))
+           (first-window (selected-window))
+           (second-window (split-window-right))
+           (other-window (split-window-below)))
+      (unwind-protect
+          (progn
+            (set-window-buffer first-window buffer)
+            (set-window-buffer second-window buffer)
+            (set-window-buffer other-window other-buffer)
+            (cl-letf (((symbol-function 'window-width)
+                       (lambda (window &optional _pixelwise)
+                         (if (eq window second-window) 80 40))))
+              (select-window first-window)
+              (with-current-buffer buffer
+                (should (eq first-window (appkit-view-display-window))))
+              (select-window other-window)
+              (with-current-buffer buffer
+                (should (eq second-window (appkit-view-display-window))))))
+        (kill-buffer buffer)
+        (kill-buffer other-buffer)))))
+
+(ert-deftest appkit-view-responsive-geometry-coalesces-display-changes ()
+  (save-window-excursion
+    (appkit-test-with-view
+      (let ((view (appkit-current-view))
+            (width 30)
+            requests)
+        (set-window-buffer (selected-window) (current-buffer))
+        (cl-letf (((symbol-function 'appkit-view-window-fill-column)
+                   (lambda (&rest _arguments) width))
+                  ((symbol-function 'appkit-request-sync)
+                   (lambda (&rest arguments)
+                     (push arguments requests))))
+          (appkit-view-enable-responsive-geometry view)
+          (should (= 28 (appkit-view-responsive-width 2)))
+          (should
+           (memq #'appkit-view--on-window-geometry-change
+                 window-size-change-functions))
+          (should
+           (memq #'appkit-view--on-window-geometry-change
+                 window-selection-change-functions))
+          (setq width 40)
+          (run-hook-with-args
+           'window-size-change-functions (selected-window))
+          (run-hook-with-args
+           'window-size-change-functions (selected-window))
+          (run-hooks 'text-scale-mode-hook))
+        (should
+         (equal (nreverse requests)
+                (list (list view :part 'geometry :position t)
+                      (list view :part 'geometry :position t))))))))
+
+(ert-deftest appkit-view-responsive-geometry-seeds-hidden-buffer-width ()
+  (appkit-test-with-view
+    (let ((view (appkit-current-view))
+          (fill-column 72))
+      (cl-letf (((symbol-function 'appkit-view-display-window)
+                 (lambda () nil)))
+        (appkit-view-enable-responsive-geometry view)
+        (should (= 72 (appkit-view-responsive-width)))))))
+
+(ert-deftest appkit-view-responsive-geometry-ignores-detached-view ()
+  (save-window-excursion
+    (appkit-test-with-view
+      (let ((view (appkit-current-view))
+            (measurements 0))
+        (set-window-buffer (selected-window) (current-buffer))
+        (appkit-view-enable-responsive-geometry view)
+        (appkit-kill-view view)
+        (cl-letf (((symbol-function 'appkit-view-window-fill-column)
+                   (lambda (&rest _arguments)
+                     (cl-incf measurements)))
+                  ((symbol-function 'appkit-request-sync)
+                   (lambda (&rest _arguments)
+                     (ert-fail "Detached view requested geometry sync"))))
+          (run-hook-with-args
+           'window-size-change-functions (selected-window))
+          (run-hooks 'text-scale-mode-hook))
+        (should (= measurements 0))))))
 
 (ert-deftest appkit-view-elide-string-adds-display-ellipsis ()
   (let* ((text "abcdefghijklmnopqrstuvwxyz")
