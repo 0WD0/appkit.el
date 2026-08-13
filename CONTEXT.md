@@ -20,6 +20,10 @@ _Avoid_: Universal option, protocol field
 The shared presentation of one attached media item, including its preview, label, description, state, and available actions.
 _Avoid_: Media resource (which is a readable or displayable resource)
 
+**Transfer control**:
+A timeline presentation of one in-flight or available byte transfer, with a direction, a state, optional 0-1 progress, optional byte counts, and a client action.
+_Avoid_: File upload, HTTP request, job, media resource
+
 **Compose submit**:
 An in-flight outbound attempt on a compose surface, with optional 0-1 progress and an optional client cancel hook.
 _Avoid_: File upload, HTTP request, job

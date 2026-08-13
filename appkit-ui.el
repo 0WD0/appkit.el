@@ -12,6 +12,30 @@
 (require 'cl-lib)
 (require 'svg nil t)
 
+(defun appkit-ui-progress-bar (progress &optional width filled empty)
+  "Return a WIDTH-column bar for PROGRESS, a 0-1 float.
+
+WIDTH defaults to 10.  FILLED is a character or (FILL . TIP) cons and
+defaults to `(?= . ?>)'.  EMPTY is the unfilled character and defaults
+to space.  Nil or non-positive PROGRESS yields an empty track."
+  (let* ((width (max 1 (or width 10)))
+         (fill-spec (or filled '(?= . ?>)))
+         (fill (if (consp fill-spec) (car fill-spec) fill-spec))
+         (tip (if (consp fill-spec) (cdr fill-spec) fill))
+         (empty (or empty ?\s))
+         (ratio (if (and (numberp progress) (> progress 0))
+                    (min 1.0 (max 0.0 (float progress)))
+                  0.0))
+         (filled-cols (min width (round (* width ratio)))))
+    (cond
+     ((= filled-cols 0) (make-string width empty))
+     ((= filled-cols 1)
+      (concat (char-to-string tip)
+              (make-string (1- width) empty)))
+     (t (concat (make-string (1- filled-cols) fill)
+                (char-to-string tip)
+                (make-string (- width filled-cols) empty))))))
+
 ;;; ── Vertical bar (SVG in GUI, Unicode in terminal) ──────────────────
 
 (defvar appkit-ui--vbar-image-cache (make-hash-table :test #'equal)

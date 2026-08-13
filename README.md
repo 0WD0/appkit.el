@@ -15,7 +15,8 @@
 - Unicode emoji completion, continuous history-window state, and keyed chat timeline projection
 - reusable prefix, one-line/list-view, mode-line, two-line avatar,
   threaded-discussion, sectioned-directory geometry, inline action spans,
-  and deterministic identity-keyed name coloring
+  timeline transfer controls for upload and download, and deterministic
+  identity-keyed name coloring
 - optional Evil integration with state-specific directory bindings and a
   deferred binding helper for client packages, without a runtime dependency
 - browser-free media resources, inline image/video previews, and media actions
