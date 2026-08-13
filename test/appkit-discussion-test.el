@@ -59,6 +59,54 @@
     (should (string-prefix-p
              "   R " (get-text-property (point) 'line-prefix)))))
 
+(ert-deftest appkit-discussion-context-precedes-avatar-heading ()
+  "Context should occupy its own prefixed line above the avatar heading."
+  (with-temp-buffer
+    (cl-letf (((symbol-function 'appkit-chat-avatar-prefixes)
+               (lambda (&rest _arguments)
+                 '(:header "H " :first-body "B " :rest-body "R "))))
+      (appkit-discussion-insert-entry
+       (appkit-discussion-entry-create
+        :key "renote"
+        :parent-key "root"
+        :depth 1
+        :connector 'end
+        :context-inserter
+        (lambda () (insert (propertize "renoted by Alice" 'user-id "alice")))
+        :context-face 'shadow
+        :heading "Original author"
+        :body-inserter
+        (lambda (prefix properties)
+          (appkit-ui-insert-prefixed-lines
+           prefix "body" :properties properties)))
+       :indent-width 3))
+    (should (equal (buffer-string)
+                   "renoted by Alice\nOriginal author\nbody\n\n"))
+    (goto-char (point-min))
+    (should (eq (get-text-property (point) 'face) 'shadow))
+    (should (equal (get-text-property (point) 'user-id) "alice"))
+    (should (equal (get-text-property (point) 'line-prefix) "│    "))
+    (forward-line 1)
+    (should (equal (get-text-property (point) 'line-prefix) "│    H "))
+    (forward-line 1)
+    (should (equal (get-text-property (point) 'line-prefix) "│    B "))))
+
+(ert-deftest appkit-discussion-empty-context-inserter-adds-no-line ()
+  "An empty context inserter should leave the heading at the first line."
+  (with-temp-buffer
+    (appkit-discussion-insert-entry
+     (appkit-discussion-entry-create
+      :key "plain"
+      :context-inserter #'ignore
+      :heading "Author"
+      :body-inserter
+      (lambda (prefix properties)
+        (appkit-ui-insert-prefixed-lines
+         prefix "body" :properties properties)))
+     :avatar-p nil
+     :separate-p nil)
+    (should (equal (buffer-string) "Author\nbody\n"))))
+
 (ert-deftest appkit-discussion-long-heading-elides-before-time ()
   "A long heading must not separate the two avatar rows."
   (with-temp-buffer
