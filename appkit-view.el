@@ -302,6 +302,23 @@ column widths.  FACE supplies the font metrics used for measurement."
             (appkit-view--elide-string-to-pixels text pixel-limit face)))
       (appkit-view-elide-string text limit face))))
 
+(defun appkit-view-default-line-pixel-height ()
+  "Return the default-face line height for the current buffer in pixels.
+
+`window-font-height' selects its window and would otherwise move point to
+that window's point.  Row printers, including asynchronous media redraws,
+must keep point at the insertion position, so this function restores
+point after the query."
+  (save-excursion
+    (let ((window (get-buffer-window (current-buffer) t)))
+      (max 1
+           (or (and window
+                    (eq (window-buffer window) (current-buffer))
+                    (ignore-errors (window-font-height window 'default)))
+               (ignore-errors (default-line-height))
+               (frame-char-height)
+               16)))))
+
 (defun appkit-view--chars-xwidth (columns &optional window)
   "Return pixel width for COLUMNS using WINDOW metrics."
   (let* ((win (or window (get-buffer-window (current-buffer) t)))

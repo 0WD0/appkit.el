@@ -9,6 +9,7 @@
 ;;; Code:
 
 (require 'cl-lib)
+(require 'appkit-ui)
 
 (defconst appkit-media-card-context-property 'appkit-media-card-context
   "Text property carrying a backend-neutral media card context.")
@@ -26,20 +27,7 @@ multiple media cards remain segment-aware.")
 
 CALLBACK is a zero-argument function.  HELP-ECHO defaults to `Activate'.  Do
 nothing when CALLBACK is not callable or the region is empty."
-  (when (and (functionp callback)
-             (< start end))
-    (let ((action-map (make-sparse-keymap))
-          (command
-           (lambda (&optional _event)
-             (interactive)
-             (funcall callback))))
-      (define-key action-map [mouse-1] command)
-      (define-key action-map (kbd "RET") command)
-      (add-text-properties
-       start end
-       (list 'keymap action-map
-             'mouse-face 'highlight
-             'help-echo (or help-echo "Activate"))))))
+  (appkit-ui-add-action start end callback :help-echo help-echo))
 
 (cl-defun appkit-media-card-context-create
     (&key payload kind title open-action download-action cancel-action

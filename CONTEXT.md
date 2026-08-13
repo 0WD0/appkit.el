@@ -35,3 +35,7 @@ _Avoid_: Indent, tree depth, thread line
 **Discussion depth**:
 The visual nesting of a tree reply under its parent.
 _Avoid_: Ancestor position, chain index
+
+**Action span**:
+A buffer region that carries one client-supplied zero-argument action, activated by RET or mouse-1. Help text describes that action, not a client keymap.
+_Avoid_: Hardcoded key cheat sheet, protocol target, nested dispatcher

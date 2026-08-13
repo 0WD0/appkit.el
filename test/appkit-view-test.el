@@ -258,6 +258,32 @@
       (when (buffer-live-p buffer)
         (kill-buffer buffer)))))
 
+(ert-deftest appkit-view-default-line-pixel-height-keeps-insertion-point ()
+  (let ((original-window (selected-window))
+        other-window
+        (buffer (generate-new-buffer " *appkit-view-line-height*")))
+    (unwind-protect
+        (progn
+          (setq other-window (split-window original-window))
+          (set-window-buffer other-window buffer)
+          (with-current-buffer buffer
+            (insert "window point\nbuffer insertion point")
+            (set-window-point other-window (point-min))
+            (goto-char (point-max))
+            (let ((expected-point (point)))
+              (cl-letf (((symbol-function 'window-font-height)
+                         (lambda (&optional window &rest _args)
+                           (with-selected-window
+                               (or window (selected-window))
+                             16))))
+                (should (= 16 (appkit-view-default-line-pixel-height))))
+              (should (= expected-point (point)))
+              (should (eq original-window (selected-window))))))
+      (when (window-live-p other-window)
+        (delete-window other-window))
+      (when (buffer-live-p buffer)
+        (kill-buffer buffer)))))
+
 (ert-deftest appkit-view-move-to-column-inserts-align-spacer-when-needed ()
   (with-temp-buffer
     (insert "abc")
