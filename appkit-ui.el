@@ -67,6 +67,80 @@ GUI frames get an SVG image; terminal frames get a plain ▏ character."
 
 ;;; ── Buttons & styled lines ──────────────────────────────────────────
 
+(defconst appkit-ui-action-property 'appkit-ui-action
+  "Text property holding the zero-argument function for an action span.")
+
+(defvar appkit-ui-action-map
+  (let ((map (make-sparse-keymap)))
+    (define-key map (kbd "RET") #'appkit-ui-activate)
+    (define-key map [down-mouse-1] #'ignore)
+    (define-key map [mouse-1] #'appkit-ui-activate)
+    map)
+  "Keymap used by inline Appkit action spans.")
+
+(defun appkit-ui--event-position (&optional event)
+  "Return the buffer position for EVENT, or point when EVENT is not a click."
+  (or (and event
+           (eventp event)
+           (posn-point (event-start event)))
+      (point)))
+
+(defun appkit-ui-action-at (&optional position)
+  "Return the Appkit action at POSITION or point.
+
+POSITION may sit on the action or immediately after it."
+  (let ((pos (or position (point))))
+    (when (and (integer-or-marker-p pos)
+               (<= (point-min) pos)
+               (<= pos (point-max)))
+      (or (and (< pos (point-max))
+               (get-text-property pos appkit-ui-action-property))
+          (and (> pos (point-min))
+               (get-text-property (1- pos) appkit-ui-action-property))))))
+
+(defun appkit-ui-activate-at (&optional position)
+  "Run the Appkit action at POSITION or point.
+
+Return non-nil when an action ran."
+  (when-let* ((action (appkit-ui-action-at position)))
+    (funcall action)
+    t))
+
+(defun appkit-ui-activate (&optional event)
+  "Activate the Appkit action at point or EVENT.
+
+When EVENT is a click, move point to that position first so the action
+sees the same entry the user clicked."
+  (interactive (list last-nonmenu-event))
+  (let ((position (appkit-ui--event-position event)))
+    (when (and event
+               (integer-or-marker-p position)
+               (/= position (point)))
+      (goto-char position))
+    (unless (appkit-ui-activate-at position)
+      (user-error "No action at point"))))
+
+(cl-defun appkit-ui-add-action (start end action &key help-echo face mouse-face)
+  "Make START..END an Appkit action span that calls ACTION.
+
+ACTION is a zero-argument function.  HELP-ECHO describes that action.
+FACE is appended when non-nil.  MOUSE-FACE defaults to `highlight'.
+Do nothing when ACTION is not callable or the region is empty."
+  (when (and (functionp action)
+             (integer-or-marker-p start)
+             (integer-or-marker-p end)
+             (< start end))
+    (add-text-properties
+     start end
+     (list appkit-ui-action-property action
+           'keymap appkit-ui-action-map
+           'mouse-face (or mouse-face 'highlight)
+           'pointer 'hand
+           'help-echo (or help-echo "Activate")))
+    (when face
+      (add-face-text-property start end face 'append))
+    action))
+
 (cl-defun appkit-ui-insert-action-button (label action
                                                &key face help-echo properties)
   "Insert clickable button LABEL calling ACTION.

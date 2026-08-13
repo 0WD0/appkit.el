@@ -10,6 +10,30 @@
     (vector (list 'down-mouse-1 posn)
             (list 'mouse-1 posn))))
 
+(ert-deftest appkit-ui-add-action-activates-from-ret-and-point ()
+  (with-temp-buffer
+    (let ((called 0))
+      (insert "before ")
+      (let ((start (point)))
+        (insert "open")
+        (appkit-ui-add-action
+         start (point)
+         (lambda () (setq called (1+ called)))
+         :help-echo "Open profile"))
+      (insert " after")
+      (goto-char (point-min))
+      (search-forward "open")
+      (goto-char (match-beginning 0))
+      (should (functionp (get-text-property (point) appkit-ui-action-property)))
+      (should (functionp (appkit-ui-action-at)))
+      (should (equal (get-text-property (point) 'help-echo) "Open profile"))
+      (should (eq (lookup-key (get-text-property (point) 'keymap) (kbd "RET"))
+                  #'appkit-ui-activate))
+      (should (appkit-ui-activate-at))
+      (should (= called 1))
+      (goto-char (point-min))
+      (should-not (appkit-ui-activate-at)))))
+
 (ert-deftest appkit-ui-action-row-dispatches-ret-and-exact-mouse-position ()
   (with-temp-buffer
     (let* ((buffer (current-buffer))
