@@ -55,6 +55,17 @@
                      '(space :align-to 25)))
       (should (eq (get-text-property (1- (point)) 'face) 'shadow)))))
 
+(ert-deftest appkit-chat-ins-insert-right-aligned-text-tracks-window-edge ()
+  (with-temp-buffer
+    (insert "Alice")
+    (let ((span (appkit-chat-ins-insert-right-aligned-text
+                 "12:34" 30 :right-margin-width 2)))
+      (should (equal (buffer-substring-no-properties
+                      (car span) (cdr span))
+                     " 12:34"))
+      (should (equal (get-text-property (car span) 'display)
+                     '(space :align-to (- right 7)))))))
+
 (ert-deftest appkit-chat-ins-insert-right-aligned-text-reserves-future-prefix ()
   (with-temp-buffer
     (insert (make-string 20 ?x))
