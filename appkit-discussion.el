@@ -25,6 +25,9 @@
   avatar-fallback
   avatar-action
   avatar-help-echo
+  context
+  context-inserter
+  context-face
   heading
   heading-inserter
   heading-face
@@ -66,11 +69,16 @@
   (let ((connector (appkit-discussion-entry-connector entry)))
     (unless (memq connector '(nil continue end))
       (error "Appkit discussion connector must be nil, continue, or end")))
+  (when (and (appkit-discussion-entry-context entry)
+             (appkit-discussion-entry-context-inserter entry))
+    (error "Appkit discussion entry has two context sources"))
   (when (and (appkit-discussion-entry-heading entry)
              (appkit-discussion-entry-heading-inserter entry))
     (error "Appkit discussion entry has two heading sources"))
-  (dolist (slot '(heading-inserter body-inserter avatar-action))
+  (dolist (slot '(context-inserter heading-inserter body-inserter avatar-action))
     (when-let* ((value (pcase slot
+                         ('context-inserter
+                          (appkit-discussion-entry-context-inserter entry))
                          ('heading-inserter
                           (appkit-discussion-entry-heading-inserter entry))
                          ('body-inserter
@@ -144,16 +152,31 @@
       (add-text-properties 0 (length copy) properties copy))
     copy))
 
+(defun appkit-discussion--insert-context (entry prefix properties)
+  "Insert ENTRY's optional pre-heading context using PREFIX and PROPERTIES."
+  (when (or (appkit-discussion-entry-context entry)
+            (appkit-discussion-entry-context-inserter entry))
+    (let ((start (point)))
+      (if-let* ((inserter (appkit-discussion-entry-context-inserter entry)))
+          (funcall inserter)
+        (insert (or (appkit-discussion-entry-context entry) "")))
+      (when (< start (point))
+        (when-let* ((face (appkit-discussion-entry-context-face entry)))
+          (add-face-text-property start (point) face 'append))
+        (insert "\n")
+        (appkit-ui-apply-line-prefix start (point) prefix)
+        (add-text-properties start (point) properties)))))
+
 (defun appkit-discussion--connector-column (connector line)
   "Return the prefix column for CONNECTOR on LINE.
 
-CONNECTOR is nil, `continue', or `end'.  LINE is `header',
+CONNECTOR is nil, `continue', or `end'.  LINE is `context', `header',
 `first-body', `rest-body', or `separator'."
   (cond
    ((eq connector 'continue)
     (propertize "│ " 'face 'appkit-discussion-connector))
    ((and (eq connector 'end)
-         (memq line '(header first-body)))
+         (memq line '(context header first-body)))
     (propertize "│ " 'face 'appkit-discussion-connector))
    ((eq connector 'end) "  ")
    (t "")))
@@ -171,10 +194,14 @@ is nil, `continue', or `end': a continue mark draws a prefix spine through
 the row and its trailing separator, and an end mark stops that spine after
 the heading.  When SEPARATE-P is non-nil, append one blank line.
 
-ENTRY's heading inserter is called with no arguments.  Its body inserter is
-called with the mutable, display-only body prefix state and the complete row
-properties.  Body inserters should apply that state through Appkit prefix
-helpers instead of inserting it into buffer text."
+ENTRY's context inserter is called with no arguments and may insert zero or
+more pre-heading lines without a trailing newline; empty output is ignored.
+Appkit applies nesting, connector, face, and row properties to that block.
+The heading inserter is called with no arguments and inserts one heading
+without a newline; Appkit reserves the avatar and timestamp columns and may
+elide that heading.  The body inserter receives the mutable, display-only body
+prefix state and complete row properties.  It should apply that state through
+Appkit prefix helpers instead of inserting it into buffer text."
   (appkit-discussion--validate-entry entry)
   (unless (and (integerp indent-width) (>= indent-width 0))
     (error "Appkit discussion indent width must be a non-negative integer"))
@@ -194,6 +221,9 @@ helpers instead of inserting it into buffer text."
                 (or (appkit-discussion-entry-avatar-fallback entry) "@")
                 :pixel-size pixel-size
                 :resize t)))
+         (context-prefix
+          (concat (appkit-discussion--connector-column connector 'context)
+                  indent))
          (header-prefix
           (concat (appkit-discussion--connector-column connector 'header)
                   indent
@@ -215,49 +245,50 @@ helpers instead of inserting it into buffer text."
          (body-prefix
           (appkit-ui-make-prefix-state first-body-prefix rest-body-prefix))
          (properties (appkit-discussion--entry-properties entry))
-         (start (point))
-         (header-start (point)))
-    (if-let* ((inserter (appkit-discussion-entry-heading-inserter entry)))
-        (funcall inserter)
-      (insert (or (appkit-discussion-entry-heading entry) "")))
-    (let* ((heading-end (point))
-           (time (appkit-discussion-entry-time entry))
-           (target-width (or width 80))
-           (prefix-width (string-width header-prefix))
-           (heading-limit
-            (and (stringp time)
-                 (not (string-empty-p time))
-                 (max 0 (- target-width prefix-width
-                           (string-width time) 2)))))
-      ;; Like Telega's message heading, reserve the trailing timestamp and
-      ;; elide an overlong heading instead of inserting a third avatar row.
-      (when (and heading-limit
-                 (> (string-width
-                     (buffer-substring header-start heading-end))
-                    heading-limit))
-        (let ((heading
-               (truncate-string-to-width
-                (buffer-substring header-start heading-end)
-                heading-limit nil nil "…")))
-          (delete-region header-start heading-end)
-          (insert heading)
-          (setq heading-end (point))))
-      (when-let* ((face (appkit-discussion-entry-heading-face entry)))
-        (add-face-text-property header-start heading-end face 'append))
-      (when (and (stringp time) (not (string-empty-p time)))
-        (appkit-chat-ins-insert-right-aligned-text
-         time target-width
-         :face (or (appkit-discussion-entry-time-face entry) 'shadow)
-         :left-prefix-width prefix-width
-         :right-edge-margin 0
-         :overflow-newline-p nil))
-      (insert "\n")
-      (appkit-ui-apply-line-prefix
-       header-start (point)
-       (appkit-ui-make-prefix-state header-prefix rest-body-prefix))
-      (when-let* ((face (appkit-discussion-entry-heading-line-face entry)))
-        (add-face-text-property header-start (point) face 'append))
-      (add-text-properties header-start (point) properties))
+         (start (point)))
+    (appkit-discussion--insert-context entry context-prefix properties)
+    (let ((header-start (point)))
+      (if-let* ((inserter (appkit-discussion-entry-heading-inserter entry)))
+          (funcall inserter)
+        (insert (or (appkit-discussion-entry-heading entry) "")))
+      (let* ((heading-end (point))
+             (time (appkit-discussion-entry-time entry))
+             (target-width (or width 80))
+             (prefix-width (string-width header-prefix))
+             (heading-limit
+              (and (stringp time)
+                   (not (string-empty-p time))
+                   (max 0 (- target-width prefix-width
+                             (string-width time) 2)))))
+        ;; Like Telega's message heading, reserve the trailing timestamp and
+        ;; elide an overlong heading instead of inserting a third avatar row.
+        (when (and heading-limit
+                   (> (string-width
+                       (buffer-substring header-start heading-end))
+                      heading-limit))
+          (let ((heading
+                 (truncate-string-to-width
+                  (buffer-substring header-start heading-end)
+                  heading-limit nil nil "…")))
+            (delete-region header-start heading-end)
+            (insert heading)
+            (setq heading-end (point))))
+        (when-let* ((face (appkit-discussion-entry-heading-face entry)))
+          (add-face-text-property header-start heading-end face 'append))
+        (when (and (stringp time) (not (string-empty-p time)))
+          (appkit-chat-ins-insert-right-aligned-text
+           time target-width
+           :face (or (appkit-discussion-entry-time-face entry) 'shadow)
+           :left-prefix-width prefix-width
+           :right-edge-margin 0
+           :overflow-newline-p nil))
+        (insert "\n")
+        (appkit-ui-apply-line-prefix
+         header-start (point)
+         (appkit-ui-make-prefix-state header-prefix rest-body-prefix))
+        (when-let* ((face (appkit-discussion-entry-heading-line-face entry)))
+          (add-face-text-property header-start (point) face 'append))
+        (add-text-properties header-start (point) properties)))
     (if-let* ((body-inserter (appkit-discussion-entry-body-inserter entry)))
         (funcall body-inserter body-prefix properties)
       ;; Keep the lower avatar slice visible for body-less entries.
