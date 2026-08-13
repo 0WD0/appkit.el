@@ -126,8 +126,7 @@ the returned image spec.  IMAGE remains suitable for immutable caches."
 Prefer the file header over its name so extensionless cache files and stale
 filename hints cannot select the wrong decoder."
   (when (and (stringp file) (file-readable-p file))
-    (pcase (or (ignore-errors (image-type-from-file-header file))
-               (ignore-errors (image-supported-file-p file)))
+    (pcase (ignore-errors (image-type-from-file-header file))
       ('png "image/png")
       ((or 'jpeg 'jpg) "image/jpeg")
       ('gif "image/gif")
@@ -602,9 +601,10 @@ Display is a separate step: call `appkit-media-insert-image-slices' or
 (defun appkit-media-one-line-preview-image-from-file (file &optional max-width)
   "Create a one-row cacheable preview for local FILE.
 
-This is `appkit-media-preview-image-from-file' with N constrained to
-one default-scale line.  Display still goes through
-`appkit-media-insert-image-slices' or `appkit-media-image-slice-rows'."
+MAX-WIDTH optionally bounds the rendered width.  This is
+`appkit-media-preview-image-from-file' constrained to one default-scale line.
+Display still goes through `appkit-media-insert-image-slices' or
+`appkit-media-image-slice-rows'."
   (appkit-media-preview-image-from-file
    file max-width (appkit-media--base-char-pixel-height)))
 

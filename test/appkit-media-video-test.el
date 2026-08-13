@@ -5,6 +5,14 @@
 (require 'seq)
 (require 'appkit-media-video)
 
+(defun appkit-media-video-test--buffer-generator (preview-buffer)
+  "Return a generator reserving only the preview buffer as PREVIEW-BUFFER."
+  (let ((original (symbol-function 'generate-new-buffer)))
+    (lambda (name &optional inhibit-buffer-hooks)
+      (if (equal name " *appkit-media-video-preview*")
+          preview-buffer
+        (funcall original name inhibit-buffer-hooks)))))
+
 (ert-deftest appkit-media-video-preview-policy-covers-rendering-limits ()
   (let ((appkit-media-inline-animation-enabled t)
         (appkit-media-inline-animation-max-duration 10)
@@ -62,7 +70,7 @@
                      (push program executable-queries)
                      (and (equal program "ffmpeg") "/usr/bin/ffmpeg")))
                   ((symbol-function 'generate-new-buffer)
-                   (lambda (&rest _) buffer))
+                   (appkit-media-video-test--buffer-generator buffer))
                   ((symbol-function 'make-process)
                    (lambda (&rest properties)
                      (setq command (plist-get properties :command)
@@ -80,6 +88,9 @@
           (should (functionp sentinel))
           (should (equal "/usr/bin/ffmpeg" (car command)))
           (should (member "https://example.invalid/clip.mp4" command))
+          (should
+           (equal appkit-media--video-input-protocols
+                  (cadr (member "-protocol_whitelist" command))))
           (should (member "-filter_complex" command))
           (should (member "-loop" command))
           (should (member "2.500" command))
@@ -113,7 +124,7 @@
                      (push program executable-queries)
                      (and (equal program "ffmpeg") "/usr/bin/ffmpeg")))
                   ((symbol-function 'generate-new-buffer)
-                   (lambda (&rest _) buffer))
+                   (appkit-media-video-test--buffer-generator buffer))
                   ((symbol-function 'make-process)
                    (lambda (&rest properties)
                      (setq command (plist-get properties :command))
@@ -185,7 +196,7 @@
                      (push program executable-queries)
                      (and (equal program "ffmpeg") "/usr/bin/ffmpeg")))
                   ((symbol-function 'generate-new-buffer)
-                   (lambda (&rest _) buffer))
+                   (appkit-media-video-test--buffer-generator buffer))
                   ((symbol-function 'make-process)
                    (lambda (&rest properties)
                      (setq command (plist-get properties :command))
@@ -217,7 +228,7 @@
                    (lambda (program)
                      (and (equal program "ffmpeg") "/usr/bin/ffmpeg")))
                   ((symbol-function 'generate-new-buffer)
-                   (lambda (&rest _) buffer))
+                   (appkit-media-video-test--buffer-generator buffer))
                   ((symbol-function 'make-process)
                    (lambda (&rest properties)
                      (let* ((command (plist-get properties :command))
@@ -279,6 +290,39 @@
       (should (eq image
                   (appkit-media-video-preview-display-image image))))))
 
+
+(ert-deftest appkit-media-video-preview-rejects-unsafe-input-protocols ()
+  (let ((appkit-media--video-preview-processes
+         (make-hash-table :test #'equal))
+        spawned
+        callback-arguments)
+    (cl-letf (((symbol-function 'executable-find)
+               (lambda (_program) "/usr/bin/ffmpeg"))
+              ((symbol-function 'make-process)
+               (lambda (&rest _)
+                 (setq spawned t)
+                 :process)))
+      (dolist
+          (source
+           (list
+            "file:///etc/passwd"
+            "https://user@example.invalid/video.mp4"
+            (concat "https://example.invalid/video.mp4\""
+                    "\n--output /tmp/injected")))
+        (setq callback-arguments nil)
+        (appkit-media-start-video-preview
+         :key '(test . unsafe)
+         :source source
+         :source-size 100
+         :duration 1
+         :cache-base "/tmp/appkit-unsafe-preview"
+         :callback (lambda (&rest arguments)
+                     (setq callback-arguments arguments)))
+        (should (equal '(nil nil) callback-arguments))
+        (should-not spawned)
+        (should-not
+         (gethash '(test . unsafe)
+                  appkit-media--video-preview-processes))))))
 (provide 'appkit-media-video-test)
 
 ;;; appkit-media-video-test.el ends here

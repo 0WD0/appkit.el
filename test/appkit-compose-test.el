@@ -194,6 +194,36 @@
     (should (equal (appkit-compose-bodies) '("first" "third")))
     (should (eq (appkit-compose-current-part-index) 1))))
 
+(ert-deftest appkit-compose-enumerates-attachment-only-input ()
+  "Client metadata must make an otherwise empty input a compose item."
+  (with-temp-buffer
+    (appkit-compose-mode)
+    (appkit-compose-setup)
+    (let ((item (appkit-compose-current-item)))
+      (appkit-compose-update-current-item
+       (plist-put item :attachments '((:path "only.png")))))
+    (should (equal (appkit-compose-bodies) '("")))
+    (should (equal (plist-get (car (appkit-compose-items)) :attachments)
+                   '((:path "only.png"))))))
+
+(ert-deftest appkit-compose-flushes-mixed-text-and-file-parts ()
+  "Input flushing must retain both textual and metadata-only parts."
+  (with-temp-buffer
+    (appkit-compose-mode)
+    (appkit-compose-setup)
+    (goto-char (appkit-compose-body-start-position))
+    (insert "text")
+    (appkit-compose-add-item)
+    (let ((item (appkit-compose-current-item)))
+      (appkit-compose-update-current-item
+       (plist-put item :attachments '((:path "only.png")))))
+    (appkit-compose-add-item)
+    (should (equal (mapcar (lambda (item) (plist-get item :text))
+                           (appkit-compose-items))
+                   '("text" "" "")))
+    (should (equal (plist-get (nth 1 (appkit-compose-items)) :attachments)
+                   '((:path "only.png"))))))
+
 (provide 'appkit-compose-test)
 
 ;;; appkit-compose-test.el ends here
