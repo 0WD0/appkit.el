@@ -1,0 +1,179 @@
+#+title: Appkit integrator guide
+#+options: toc:2 num:nil
+
+This guide is for authors of Appkit clients.  It is not an end-user
+manual.  Terms such as /compose submit/ and /transfer control/ are
+defined in [[file:../CONTEXT.md][CONTEXT.md]].
+
+* Ownership
+
+Appkit owns lifecycle, update mechanics, and reusable presentation.
+Clients own application state, protocol adaptation, and branding.
+
+** Appkit
+
+- Application sessions, buffer views, and owned timers, hooks, and
+  processes
+- Owner-scoped keyed FIFO task queues with bounded concurrency
+- Stable-key read-only projections with presentation dependency
+  indexing, coalesced invalidation, and semantic position preservation
+- Generated-content, property-only, and editable transactions
+- Stable-key EWOC reconciliation and independent semantic point and
+  viewport
+- Chatbuf composers, compose surfaces, discussion rows, directories,
+  action spans, transfer controls, and name coloring
+- HTTPS-only media acquisition, preview processes, and media-card
+  actions
+- Optional Evil bindings without a runtime Evil dependency
+
+** Clients
+
+- Protocol objects, validation, persistence, and error meaning
+- Transport, including how progress is measured and how cancel aborts
+  that transport
+- Identity keys, faces, and self or system color overrides
+- Cursor and page semantics, remote-frontier observations, and when a
+  response reaches latest
+- Logical media cache keys and wire-resource state
+
+* Surfaces
+
+** Compose submit
+
+A standalone compose surface is a chatbuf.  Committed draft items are
+generated timeline rows.  The trailing composer holds the current
+uncommitted or in-edit part.  Status fields live on the header line.
+
+An in-flight submit carries optional 0-1 progress and an optional
+client cancel hook.  Appkit presents that session; the client decides
+whether the ratio comes from curl, chunked upload, or nothing at all.
+
+** Transfer control
+
+A timeline transfer control presents one upload or download.  The
+client supplies direction, state, optional 0-1 progress, optional
+byte counts, and a cancel or download action.  Appkit draws the bar
+and measure.  It does not own a file, HTTP request, or job model.
+
+** Chat buffers
+
+~appkit-chatbuf-mode~ is the writable base.  Clients register a
+timeline-only minor mode with ~appkit-chatbuf-use-timeline-mode~.
+Appkit clamps prompt motion, repairs structured input objects, and
+keeps generated content read-only even when the composer is hidden.
+
+Set ~appkit-chatbuf-input-sync-function~ to synchronize
+protocol-specific draft state.  Do not install a second after-change
+controller.
+
+** Discussion
+
+Discussion rows accept optional pre-heading context, nesting depth,
+and a prefix connector for linear ancestor chains.  Clients supply
+the context text; Appkit does not interpret it as a Renote, reply, or
+quote.
+
+** History
+
+The shared history controller owns exact buffer-local window edges,
+unknown, partial, loading, and authoritative-empty state, opaque
+request ownership, strict slicing, automatic edge gates, and passive
+delimiter geometry.
+
+** Media
+
+Callers adapt backend objects into canonical resource descriptors and
+explicit preview metadata.  Appkit owns HTTPS-only atomic acquisition,
+byte-level image cache finalization, lifecycle-bound open transfers,
+and protocol-restricted preview and player processes.
+
+** Completion
+
+Appkit owns token bounds, candidate metadata, CAPF and picker
+presentation, atomic commit, and ordered TAB dispatch.  Clients own
+member and server-emoji lookup, avatar acquisition, protocol objects,
+and insertion callbacks.  A selected mention remains a client-defined
+structured composer object.
+
+On Emacs versions that provide the built-in emoji database,
+~appkit-chat-emoji-*~ adds shared ~:unicode_name:~ candidates.
+
+* Update model
+
+An application starts an ~appkit-app~, attaches one ~appkit-view~ to
+each live buffer, and gives the view a synchronization function.
+External events update the client's canonical state and call
+~appkit-request-sync~ with opaque invalidations.  The synchronization
+function is the only event path that projects state back into
+generated buffer content.
+
+Read-only ordered views initialize one ~appkit-projection~, project
+client entries into rows with stable keys, and synchronize those rows
+only from the view callback.  Appkit reconciles retained EWOC nodes,
+redraws rows affected by changed dependencies, and preserves semantic
+point and viewport state for every live window.
+
+Views with width-sensitive printers can enable responsive projection
+geometry.  Appkit then redraws retained keys when the chosen window's
+usable columns, text scale, or line-number geometry changes.
+
+A request generation owns loading flags and tokens even if its
+original view was replaced.  Its callback must retire that ownership
+without projecting into a stale buffer.  Deferred user actions are
+tied to the same generation.
+
+Each attached buffer retains a protocol-neutral fingerprint from the
+application kind, stable application id, and view id.  Detaching a
+view leaves that fingerprint behind so a later session can recover a
+renamed buffer.  Changing major mode clears it.  Appkit never steals
+a buffer from a different live view.
+
+Generated structural edits are undo-free.  The editable tail composer
+keeps normal Emacs undo.  Position snapshots belong to Appkit: each
+live window preserves ~window-point~ and ~window-start~ by stable
+entry key plus an offset, with an absolute line and column fallback.
+
+* Task queues
+
+The shared task queue deduplicates equal keys across active and
+waiting work, starts tasks in FIFO order up to a live adjustable
+limit, and guards every completion with a one-shot token.  A starter
+may return an ~appkit-handle~ or a zero-argument cancellation
+function.  Killing the owning app or view closes the queue and makes
+stale completions inert.
+
+~appkit-task-queue-cancel-keys~ retires all matching work before it
+frees a slot.  Synchronous completion is delivered only after the
+starter returns its handle.
+
+* Namespaces
+
+Use these public prefixes directly:
+
+- ~appkit-task-queue-*~
+- ~appkit-projection-*~
+- ~appkit-compose-*~
+- ~appkit-chatbuf-*~
+- ~appkit-chat-history-*~
+- ~appkit-chat-timeline-*~
+- ~appkit-ui-*~
+- ~appkit-view-*~
+- ~appkit-chat-completion-*~
+- ~appkit-chat-ins-*~
+- ~appkit-discussion-*~
+- ~appkit-directory-*~
+- ~appkit-name-color-*~
+- ~appkit-evil-*~
+- ~appkit-media-*~
+
+* Development
+
+#+begin_src sh
+eask recompile
+scripts/eask-ert-brief test/*.el
+#+end_src
+
+The brief runner recompiles immediately before testing, preserves
+compiler diagnostics or ERT failure backtraces, and forwards its
+arguments to ~eask test ert~.  Sibling clients can invoke it from
+their own package directory.
