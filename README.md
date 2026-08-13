@@ -14,8 +14,8 @@
 - a persistent chat composer, editable chat-buffer base mode, point-local timeline command switching, shared rich completion substrate, projected
 - Unicode emoji completion, continuous history-window state, and keyed chat timeline projection
 - reusable prefix, one-line/list-view, mode-line, two-line avatar,
-  threaded-discussion, sectioned-directory geometry, and deterministic
-  identity-keyed name coloring
+  threaded-discussion, sectioned-directory geometry, inline action spans,
+  and deterministic identity-keyed name coloring
 - optional Evil integration with state-specific directory bindings and a
   deferred binding helper for client packages, without a runtime dependency
 - browser-free media resources, inline image/video previews, and media actions
