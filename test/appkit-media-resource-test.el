@@ -165,6 +165,7 @@
          (appkit-media--scheduling-transfers-p nil)
          (appkit-media--inflight-transfers (make-hash-table :test #'equal))
          plz-arguments
+         curl-arguments
          success-value
          failure)
     (unwind-protect
@@ -173,7 +174,8 @@
           (with-temp-file target (insert "old contents"))
           (cl-letf (((symbol-function 'plz)
                    (lambda (&rest arguments)
-                     (setq plz-arguments arguments)
+                     (setq plz-arguments arguments
+                           curl-arguments plz-curl-default-args)
                      :remote-process))
                   ((symbol-function 'url-copy-file)
                    (lambda (&rest _)
@@ -189,6 +191,12 @@
           (should (eq 'get (nth 0 plz-arguments)))
           (should (equal "https://example.invalid/report.pdf"
                          (nth 1 plz-arguments)))
+          (should (equal "--disable" (car curl-arguments)))
+          (should
+           (equal
+            '("--proto" "=https" "--proto-redir" "=https"
+              "--max-redirs" "5")
+            (last curl-arguments 6)))
           (let ((properties (nthcdr 2 plz-arguments)))
             (let ((part (cadr (plist-get properties :as))))
               (should (string-suffix-p "/download.part" part))
@@ -462,6 +470,35 @@
           (should (= 0 (hash-table-count appkit-media--inflight-transfers))))
       (delete-directory directory t))))
 
+(ert-deftest appkit-media-transfer-cleans-staging-on-enqueue-construction-error ()
+  (let* ((directory (make-temp-file "appkit-media-construction-error" t))
+         (target (expand-file-name "target.bin" directory))
+         (appkit-media--pending-transfers nil)
+         (appkit-media--active-transfer-count 0)
+         (appkit-media--scheduling-transfers-p nil)
+         (appkit-media--inflight-transfers (make-hash-table :test #'equal))
+         transfer
+         failure)
+    (unwind-protect
+        (cl-letf (((symbol-function 'appkit-media--enqueue-transfer)
+                   (lambda (candidate)
+                     (setq transfer candidate)
+                     (error "constructor enqueue failed"))))
+          (should-not
+           (appkit-media-copy-or-download-resource-async
+            '((url . "https://example.invalid/target.bin")) target
+            #'ignore (lambda (reason) (setq failure reason))))
+          (should (string-match-p "constructor enqueue failed" failure))
+          (should (appkit-media--transfer-p transfer))
+          (should-not
+           (file-directory-p
+            (appkit-media--transfer-staging-directory transfer)))
+          (should-not appkit-media--pending-transfers)
+          (should (= 0 appkit-media--active-transfer-count))
+          (should (= 0 (hash-table-count
+                        appkit-media--inflight-transfers))))
+      (delete-directory directory t))))
+
 (ert-deftest appkit-media-remote-transfer-rejects-missing-partial ()
   (let* ((directory (make-temp-file "appkit-media-missing-part" t))
          (target (expand-file-name "target.bin" directory))
@@ -636,7 +673,7 @@
            (appkit-media-play-video-source
             "https://example.invalid/movie.mp4" "test-client")))
       (should
-       (equal '("mpv" "--no-terminal"
+       (equal '("mpv" "--no-terminal" "--"
                 "https://example.invalid/movie.mp4")
               (plist-get process-properties :command)))
       (should (equal "appkit-media-video-player"
@@ -1002,6 +1039,117 @@
     "/definitely/missing/appkit-video.mp4" "client")
    :type 'user-error))
 
+
+(ert-deftest appkit-media-remote-transfer-rejects-unsafe-url-before-dispatch ()
+  (let* ((directory (make-temp-file "appkit-media-url-scheme" t))
+         (target (expand-file-name "nested/report.pdf" directory))
+         dispatched
+         failure)
+    (unwind-protect
+        (cl-letf (((symbol-function 'plz)
+                   (lambda (&rest _)
+                     (setq dispatched t))))
+          (dolist
+              (url
+               (list
+                "http://example.invalid/report.pdf"
+                "https://user@example.invalid/report.pdf"
+                (concat "https://example.invalid/report.pdf\""
+                        "\n--output \"/tmp/appkit-injected")))
+            (setq failure nil)
+            (should-not
+             (appkit-media-copy-or-download-resource-async
+              `((url . ,url))
+              target #'ignore (lambda (reason) (setq failure reason))))
+            (should (string-match-p "must use HTTPS" failure)))
+          (should-not dispatched)
+          (should-not (file-directory-p (file-name-directory target))))
+      (delete-directory directory t))))
+
+(ert-deftest appkit-media-remote-transfer-rejects-unsafe-headers-before-dispatch ()
+  (let* ((directory (make-temp-file "appkit-media-header-safety" t))
+         (target (expand-file-name "report.pdf" directory))
+         dispatched)
+    (unwind-protect
+        (cl-letf (((symbol-function 'plz)
+                   (lambda (&rest _)
+                     (setq dispatched t))))
+          (dolist
+              (headers
+               (list
+                `(("X-Test" . ,(concat "safe\"" "\n--output /tmp/injected")))
+                `((,(concat "X-Test\"" "\n--output") . "value"))))
+            (should-error
+             (appkit-media-copy-or-download-resource-async
+              '((url . "https://example.invalid/report.pdf"))
+              target #'ignore #'ignore :headers headers)))
+          (should-not dispatched))
+      (delete-directory directory t))))
+
+(ert-deftest appkit-media-video-player-rejects-option-and-unsafe-url-sources ()
+  (let (spawned)
+    (cl-letf (((symbol-function 'appkit-media-command-runnable-p)
+               (lambda (_) t))
+              ((symbol-function 'make-process)
+               (lambda (&rest _)
+                 (setq spawned t)
+                 :player)))
+      (dolist (source (list "--script=/tmp/evil.lua"
+                            "file:///tmp/movie.mp4"
+                            "http://example.invalid/movie.mp4"
+                            "gopher://example.invalid/movie.mp4"
+                            "https://user@example.invalid/movie.mp4"
+                            (concat "https://example.invalid/movie.mp4\""
+                                    "\n--output /tmp/injected")))
+        (should-error
+         (appkit-media-play-video-source source "test")
+         :type 'user-error))
+      (should-not spawned))))
+
+(ert-deftest appkit-media-owned-file-open-cancels-and-ignores-late-success ()
+  (let* ((directory (make-temp-file "appkit-media-owned-open" t))
+         (app (appkit-start-app 'appkit-media-test :id 'owned-open
+                                :shutdown #'ignore))
+         (buffer (generate-new-buffer " *appkit-media-owned-open*"))
+         view
+         success
+         (cancel-count 0)
+         opened)
+    (unwind-protect
+        (progn
+          (with-current-buffer buffer
+            (setq view
+                  (appkit-attach-view
+                   :app app :id 'file-open :mode major-mode)))
+          (cl-letf
+              (((symbol-function 'appkit-media--cache-file-resource-for-open)
+                (lambda (_resource _key _directory callback _errback)
+                  (setq success callback)
+                  :transfer))
+               ((symbol-function 'appkit-media-transfer-p)
+                (lambda (object) (eq object :transfer)))
+               ((symbol-function 'appkit-media-cancel-transfer)
+                (lambda (object)
+                  (should (eq object :transfer))
+                  (cl-incf cancel-count)))
+               ((symbol-function 'appkit-media-open-file)
+                (lambda (file) (setq opened file))))
+            (appkit-media-open-resource
+             '((url . "https://example.invalid/report.pdf")
+               (name . "report.pdf")
+               (mime-type . "application/pdf"))
+             :kind 'file :cache-directory directory :owner view)
+            (should (functionp success))
+            (should (= 1 (length (appkit-view-handles view))))
+            (appkit-kill-view view)
+            (should (= 1 cancel-count))
+            (funcall success "/tmp/late-report.pdf")
+            (should-not opened)))
+      (when (appkit-app-live-p app)
+        (appkit-stop-app app))
+      (when (buffer-live-p buffer)
+        (kill-buffer buffer))
+      (delete-directory directory t))))
 (provide 'appkit-media-resource-test)
 
 ;;; appkit-media-resource-test.el ends here

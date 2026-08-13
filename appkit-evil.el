@@ -20,12 +20,6 @@
 (declare-function evil-quit "evil-commands" (&optional force))
 (defvar evil-local-mode)
 
-(eval-when-compile
-  ;; Keep Evil optional for package consumers and byte compilation.
-  (unless (require 'evil nil t)
-    (defun evil-define-key* (&rest _args) nil)
-    (defun evil-set-initial-state (&rest _args) nil)))
-
 (defgroup appkit-evil nil
   "Optional Evil integration for Appkit surfaces."
   :group 'appkit

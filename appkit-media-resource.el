@@ -16,6 +16,7 @@
 (require 'plz)
 (require 'seq)
 (require 'subr-x)
+(require 'url-parse)
 (require 'appkit-core)
 (require 'appkit-media-card)
 (require 'appkit-media-image)
@@ -62,6 +63,10 @@ The function receives one local filename."
   '(("Accept" . "image/png,image/webp,image/*;q=0.8,*/*;q=0.1"))
   "HTTP headers used when acquiring image previews.")
 
+(defconst appkit-media--curl-security-arguments
+  '("--proto" "=https" "--proto-redir" "=https" "--max-redirs" "5")
+  "Curl arguments restricting remote media and redirects to HTTPS.")
+
 (defvar appkit-media--pending-transfers nil
   "FIFO list of remote media transfers waiting to start.")
 
@@ -107,6 +112,43 @@ The function receives one local filename."
   "Return non-nil when URL is a non-empty string."
   (and (stringp url)
        (not (string-empty-p url))))
+
+(defun appkit-media--https-url-p (url)
+  "Return non-nil when URL is a curl-config-safe HTTPS URL.
+
+The authority must contain a host and no credentials.  Literal whitespace,
+control characters, quotes, and backslashes are rejected before URL parsing
+because Plz 0.9 serializes request data through curl's stdin config format."
+  (and (appkit-media-url-present-p url)
+       (not (string-match-p "[[:space:]\"\\\\]" url))
+       (condition-case nil
+           (let ((parsed (url-generic-parse-url url)))
+             (and (string-equal (url-type parsed) "https")
+                  (stringp (url-host parsed))
+                  (not (string-empty-p (url-host parsed)))
+                  (null (url-user parsed))
+                  (null (url-password parsed))))
+         (error nil))))
+
+(defun appkit-media--local-or-https-source-p (source)
+  "Return non-nil when SOURCE is an existing local file or HTTPS URL."
+  (or (appkit-media--https-url-p source)
+      (appkit-media-file-present-p source)))
+
+(defun appkit-media--validate-headers (headers)
+  "Return HEADERS after validating their curl-config-safe syntax."
+  (unless (listp headers)
+    (error "Appkit media headers must be an alist"))
+  (dolist (header headers)
+    (let ((name (and (consp header) (car header)))
+          (value (and (consp header) (cdr header))))
+      (unless (and (stringp name)
+                   (string-match-p
+                    "\\`[!#$%&'*+.^_`|~0-9A-Za-z-]+\\'" name)
+                   (stringp value)
+                   (not (string-match-p "[[:cntrl:]\"\\\\]" value)))
+        (error "Appkit media header is unsafe: %S" header))))
+  headers)
 
 (defun appkit-media-file-present-p (file)
   "Return non-nil when FILE names an existing regular file."
@@ -291,12 +333,12 @@ The only valid results are `image', `video', and `file'."
 CLIENT-LABEL identifies the application in user-facing messages.  When OWNER
 is a live Appkit app or view, its lifecycle owns the external player process."
   (let ((label (or client-label "media")))
-    (unless (appkit-media-url-present-p source)
-      (user-error "%s: video has no playable source" label))
+    (unless (appkit-media--local-or-https-source-p source)
+      (user-error "%s: video source must be a local file or HTTPS URL" label))
     (let* ((command appkit-media-video-player-command)
            (argv (appkit-media-command-arguments command))
            (program (car argv))
-           (args (append (cdr argv) (list source))))
+           (args (append (cdr argv) (list "--" source))))
       (unless (and program (appkit-media-command-runnable-p command))
         (user-error
          "%s: video player is unavailable; customize `appkit-media-video-player-command'"
@@ -605,16 +647,21 @@ CLIENT-LABEL in synchronous setup errors."
   (setf (appkit-media--transfer-active-p transfer) t)
   (cl-incf appkit-media--active-transfer-count)
   (condition-case err
-      (setf (appkit-media--transfer-process transfer)
-            (plz 'get (appkit-media--transfer-url transfer)
-              :headers (appkit-media--transfer-headers transfer)
-              :as `(file ,(appkit-media--transfer-part-file transfer))
-              :noquery t
-              :then (lambda (file)
-                      (appkit-media--remote-transfer-succeeded transfer file))
-              :else (lambda (error-data)
-                      (appkit-media--remote-transfer-failed
-                       transfer error-data))))
+      (let ((plz-curl-default-args
+             (append
+              '("--disable")
+              plz-curl-default-args
+              appkit-media--curl-security-arguments)))
+        (setf (appkit-media--transfer-process transfer)
+              (plz 'get (appkit-media--transfer-url transfer)
+                :headers (appkit-media--transfer-headers transfer)
+                :as `(file ,(appkit-media--transfer-part-file transfer))
+                :noquery t
+                :then (lambda (file)
+                        (appkit-media--remote-transfer-succeeded transfer file))
+                :else (lambda (error-data)
+                        (appkit-media--remote-transfer-failed
+                         transfer error-data)))))
     ((error quit)
      (appkit-media--release-active-transfer transfer)
      (appkit-media--finish-transfer
@@ -710,6 +757,7 @@ ERROR receives a readable reason.  HEADERS are forwarded for remote requests."
     (error "Appkit media SUCCESS callback must be a function"))
   (unless (functionp error)
     (error "Appkit media ERROR callback must be a function"))
+  (appkit-media--validate-headers headers)
   (let* ((resource (appkit-media-resource-normalize resource))
          (target (expand-file-name target))
          (file (alist-get 'file resource))
@@ -718,6 +766,10 @@ ERROR receives a readable reason.  HEADERS are forwarded for remote requests."
          (existing (gethash target appkit-media--inflight-transfers)))
     (condition-case err
         (progn
+          (when (and (appkit-media-url-present-p url)
+                     (not (appkit-media-file-present-p file))
+                     (not (appkit-media--https-url-p url)))
+            (error "Remote media URL must use HTTPS"))
           (make-directory
            (or (file-name-directory target) default-directory) t)
           (cond
@@ -752,11 +804,21 @@ ERROR receives a readable reason.  HEADERS are forwarded for remote requests."
                        :headers (copy-tree headers)
                        :staging-directory staging-directory
                        :part-file part))
-                     (handle (appkit-media--add-transfer-handle
-                              transfer success error)))
-                (puthash target transfer appkit-media--inflight-transfers)
-                (appkit-media--enqueue-transfer transfer)
-                handle)))
+                     handle
+                     handed-off-p)
+                (unwind-protect
+                    (progn
+                      (setq handle
+                            (appkit-media--add-transfer-handle
+                             transfer success error))
+                      (puthash target transfer
+                               appkit-media--inflight-transfers)
+                      (appkit-media--enqueue-transfer transfer)
+                      (setq handed-off-p t)
+                      handle)
+                  (unless handed-off-p
+                    (setf (appkit-media--transfer-listeners transfer) nil)
+                    (appkit-media--cancel-underlying-transfer transfer))))))
            (t
             (appkit-media--invoke-transfer-callback
              error 'error "resource has neither local file nor URL")
@@ -872,6 +934,48 @@ Pass its path to CALLBACK, or a reason to ERRBACK."
       (appkit-media-copy-or-download-resource-async
        resource target callback errback))))
 
+(defun appkit-media--owner-live-p (owner)
+  "Return non-nil when OWNER is absent or a live Appkit app or view."
+  (or (null owner)
+      (appkit-app-live-p owner)
+      (appkit-view-live-p owner)))
+
+(defun appkit-media--start-owned-open-transfer
+    (owner start success error)
+  "Run START and bind its asynchronous transfer to OWNER.
+
+START receives guarded success and error callbacks.  A dead OWNER cancels the
+transfer, and callbacks arriving after owner death have no visible effect."
+  (unless (appkit-media--owner-live-p owner)
+    (user-error "Media owner is no longer live"))
+  (let (transfer lifecycle-handle completed-p)
+    (cl-labels
+        ((finish (callback value)
+           (unless completed-p
+             (setq completed-p t)
+             (when lifecycle-handle
+               (appkit-retire-handle lifecycle-handle))
+             (when (appkit-media--owner-live-p owner)
+               (funcall callback value)))))
+      (setq transfer
+            (funcall start
+                     (lambda (value) (finish success value))
+                     (lambda (value) (finish error value))))
+      (when (and owner
+                 (appkit-media-transfer-p transfer)
+                 (not completed-p))
+        (if (appkit-media--owner-live-p owner)
+            (condition-case err
+                (setq lifecycle-handle
+                      (appkit-register-handle
+                       owner 'function transfer
+                       #'appkit-media-cancel-transfer))
+              ((error quit)
+               (appkit-media-cancel-transfer transfer)
+               (signal (car err) (cdr err))))
+          (appkit-media-cancel-transfer transfer)))
+      transfer)))
+
 (cl-defun appkit-media-open-resource
     (resource &key kind cache-key cache-directory cache-update-function
               (client-label "media") owner)
@@ -881,8 +985,8 @@ Images are cached and opened inside Emacs, videos use
 `appkit-media-video-player-command', and other remote files are cached
 asynchronously before opening.  Remote resources require CACHE-DIRECTORY.
 CACHE-KEY identifies the entry.  CACHE-UPDATE-FUNCTION receives a copy after
-it becomes local, CLIENT-LABEL prefixes user-facing messages, and OWNER may
-bind an external video player to a live Appkit app or view."
+it becomes local, CLIENT-LABEL prefixes user-facing messages, and OWNER binds
+non-video transfers or an external video player to a live Appkit app or view."
   (let* ((resource (appkit-media-resource-normalize resource))
          (kind (appkit-media-resource-kind resource kind))
          (file (alist-get 'file resource))
@@ -894,7 +998,10 @@ bind an external video player to a live Appkit app or view."
              (funcall cache-update-function (copy-tree resource)))
            local-file)
          (open-local (local-file)
-           (appkit-media-open-file (remember local-file))))
+           (when (appkit-media--owner-live-p owner)
+             (let ((remembered (remember local-file)))
+               (when (appkit-media--owner-live-p owner)
+                 (appkit-media-open-file remembered))))))
       (pcase kind
         ('video
          (appkit-media-play-video-source
@@ -908,9 +1015,12 @@ bind an external video player to a live Appkit app or view."
         ('image
          (if (appkit-media-file-present-p file)
              (open-local file)
-           (message "%s: downloading image…" client-label)
-           (appkit-media--cache-image-resource-for-open
-            resource cache-key cache-directory client-label #'open-local
+           (appkit-media--start-owned-open-transfer
+            owner
+            (lambda (success error)
+              (appkit-media--cache-image-resource-for-open
+               resource cache-key cache-directory client-label success error))
+            #'open-local
             (lambda (reason)
               (message "%s: failed to open image: %s"
                        client-label reason)))
@@ -918,12 +1028,16 @@ bind an external video player to a live Appkit app or view."
         (_
          (if (appkit-media-file-present-p file)
              (open-local file)
-           (message "%s: downloading media…" client-label)
-           (appkit-media--cache-file-resource-for-open
-            resource cache-key cache-directory #'open-local
+           (appkit-media--start-owned-open-transfer
+            owner
+            (lambda (success error)
+              (appkit-media--cache-file-resource-for-open
+               resource cache-key cache-directory success error))
+            #'open-local
             (lambda (reason)
               (message "%s: failed to open media: %s"
-                       client-label reason)))))))))
+                       client-label reason)))
+           nil))))))
 
 (provide 'appkit-media-resource)
 
