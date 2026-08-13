@@ -25,13 +25,13 @@
 
 (cl-defun appkit-chat-ins-insert-right-aligned-text
     (text target-width &key face (right-align-p t) left-prefix-width
-          right-margin-width (minimum-gap 2) (overflow-newline-p t))
+          right-edge-margin (minimum-gap 2) (overflow-newline-p t))
   "Insert TEXT at the right edge of TARGET-WIDTH and return its span.
 
 FACE styles TEXT.  When RIGHT-ALIGN-P is nil, insert one ordinary separating
 space instead.  LEFT-PREFIX-WIDTH reserves a display-only prefix which the
-caller will apply after insertion.  RIGHT-MARGIN-WIDTH, when numeric, keeps
-TEXT that many columns from the window's right edge during redisplay.
+caller will apply after insertion.  RIGHT-EDGE-MARGIN, when numeric, keeps
+TEXT that many current-face character widths from the window's right edge.
 MINIMUM-GAP is the required gap between existing line content and TEXT.  If
 the line cannot fit and OVERFLOW-NEWLINE-P is non-nil, place TEXT on a new
 right-aligned line."
@@ -52,14 +52,15 @@ right-aligned line."
                                   (max 0 (or minimum-gap 0))))))
             (insert "\n")
             (setq start (point)))
-          (if (numberp right-margin-width)
+          (if (numberp right-edge-margin)
               (insert
                (propertize
                 " " 'display
                 `(space :align-to
                         (- right
-                           ,(+ tail-width
-                               (max 0 right-margin-width))))))
+                           (,(+ tail-width
+                                (max 0 right-edge-margin))
+                            . width)))))
             (appkit-view-move-to-column target-column)))
       (insert " "))
     (insert rendered)

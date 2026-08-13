@@ -30,7 +30,7 @@
     (goto-char (point-min))
     (search-forward "12:34")
     (should (equal (get-text-property (1- (match-beginning 0)) 'display)
-                   '(space :align-to (- right 5))))
+                   '(space :align-to (- right (5 . width)))))
     (goto-char (point-min))
     (should (equal "reply-2" (appkit-discussion-key-at-point)))
     (should (equal "comment-1"
@@ -58,6 +58,37 @@
     (forward-line 1)
     (should (string-prefix-p
              "   R " (get-text-property (point) 'line-prefix)))))
+
+(ert-deftest appkit-discussion-long-heading-elides-before-time ()
+  "A long heading must not separate the two avatar rows."
+  (with-temp-buffer
+    (cl-letf (((symbol-function 'appkit-chat-avatar-prefixes)
+               (lambda (&rest _arguments)
+                 '(:header "H " :first-body "B " :rest-body "R "))))
+      (appkit-discussion-insert-entry
+       (appkit-discussion-entry-create
+        :key "long"
+        :heading
+        "Alice Extremely Long Identity renoted Bob Equally Long Identity"
+        :time "12:34"
+        :body-inserter
+        (lambda (prefix properties)
+          (appkit-ui-insert-prefixed-lines
+           prefix "body" :properties properties)))
+       :width 30))
+    (goto-char (point-min))
+    (search-forward "12:34")
+    (should (= 1 (line-number-at-pos)))
+    (goto-char (line-beginning-position))
+    (should (search-forward "…" (line-end-position) t))
+    (should-not (get-text-property (1- (point)) 'display))
+    (should-not (search-forward "Equally" (line-end-position) t))
+    (forward-line 1)
+    (should (equal "body"
+                   (buffer-substring-no-properties
+                    (line-beginning-position) (line-end-position))))
+    (should (string-prefix-p
+             "B " (get-text-property (point) 'line-prefix)))))
 
 (ert-deftest appkit-discussion-entry-can-omit-avatar-prefix ()
   "An entry without a shared avatar reserves only nesting indentation."
