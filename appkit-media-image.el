@@ -4,13 +4,17 @@
 
 ;; Protocol-neutral image primitives for stateful chat applications.  This
 ;; module owns preview sizing, vertical image slices, bounded inline animation,
-;; and image-byte format detection.  Backend payloads remain application
-;; concerns; `appkit-media-resource' owns resource acquisition and caching.
+;; and image-byte format detection.  Cacheable previews come from
+;; `appkit-media-preview-image-from-file'; display goes through
+;; `appkit-media-insert-image-slices' or `appkit-media-image-slice-rows'.
+;; Backend payloads remain application concerns; `appkit-media-resource'
+;; owns resource acquisition and caching.
 
 ;;; Code:
 
 (require 'cl-lib)
 (require 'image)
+(require 'pcase)
 (require 'seq)
 (require 'svg nil t)
 (require 'appkit-core)
@@ -364,39 +368,84 @@ registry functions."
   (dolist (window (get-buffer-window-list (current-buffer) nil t))
     (appkit-media--start-window-inline-animations window)))
 
+(defun appkit-media--image-with-pixel-height (image pixel-height)
+  "Return a copy of IMAGE whose `:height' is PIXEL-HEIGHT.
+
+The original IMAGE is not mutated, so cached `:height Nch' descriptors
+stay reusable after `text-scale-mode'."
+  (let ((properties (copy-sequence (cdr-safe image))))
+    (cons 'image (plist-put properties :height pixel-height))))
+
+(defun appkit-media--line-slice-geometry (image)
+  "Return (RENDER-IMAGE SLICE-COUNT SLICE-HEIGHT) for displaying IMAGE.
+
+RENDER-IMAGE is a copy sized to SLICE-COUNT current text lines.
+IMAGE is not mutated."
+  (let* ((slice-count (appkit-media-image-slice-count image))
+         (slice-height (appkit-media--char-pixel-height)))
+    (list (appkit-media--image-with-pixel-height
+           image (* slice-count slice-height))
+          slice-count
+          slice-height)))
+
+(defun appkit-media-image-slice-rows (image)
+  "Return IMAGE as one current-line display string per slice.
+
+This is the non-inserting counterpart of
+`appkit-media-insert-image-slices'.  Each string is a single space
+whose `display' is one row of a copy sized to N current text lines.
+IMAGE is not mutated.  After `text-scale-mode', rebuild and call this
+again so the rows follow the new line height."
+  (pcase-let ((`(,render-image ,slice-count ,slice-height)
+               (appkit-media--line-slice-geometry image)))
+    (cl-loop for slice-index below slice-count
+             collect
+             (propertize
+              " "
+              'display (list (list 'slice
+                                   0
+                                   (* slice-index slice-height)
+                                   1.0
+                                   slice-height)
+                             render-image)
+              'rear-nonsticky '(display)))))
+
 (defun appkit-media-insert-image-slices
     (image &optional action prefix-string fallback help-echo)
   "Insert IMAGE as vertical line slices with optional ACTION.
 
-Insert PREFIX-STRING before every slice after the first.  FALLBACK is the
-image's protocol alt text.  HELP-ECHO describes ACTION."
+IMAGE should come from `appkit-media-preview-image-from-file'.  This
+function does not mutate IMAGE.  It copies IMAGE, sizes the copy to N
+times the current line, and inserts one slice per line.  After
+`text-scale-mode', rebuild the buffer and call this again.
+
+Insert PREFIX-STRING before every slice after the first.  FALLBACK is
+the image's protocol alt text.  HELP-ECHO describes ACTION."
   (let* ((animated-p (appkit-media-inline-animation-image-p image))
-         (render-image
+         (source-image
           (if animated-p
               (appkit-media--make-inline-animation-occurrence image)
-            image))
-         (slice-count (appkit-media-image-slice-count render-image))
-         ;; Match the geometry used to create `:height Nch' previews.  Like
-         ;; telega's `telega-chars-xheight', this is a stable font metric for
-         ;; the target buffer, never the height of an arbitrary selected line.
-         (slice-height-pixels (appkit-media--char-pixel-height))
+            image)))
+    (pcase-let
+        ((`(,render-image ,slice-count ,slice-height)
+          (appkit-media--line-slice-geometry source-image))
          (label (or fallback "[image]")))
-    (dotimes (slice-index slice-count)
-      (when (> slice-index 0)
-        (appkit-media-insert-slice-newline)
-        (when prefix-string
-          (insert prefix-string)))
-      (let ((slice-start (point))
-            (slice (list 0
-                         (* slice-index slice-height-pixels)
-                         1.0
-                         slice-height-pixels)))
-        (insert-image render-image label nil slice)
-        (appkit-media-add-action-properties
-         slice-start (point) action (or help-echo "Open media"))))
-    (when animated-p
-      (appkit-media--register-inline-animation-occurrence render-image)
-      (appkit-media--install-inline-animation-discovery))))
+      (dotimes (slice-index slice-count)
+        (when (> slice-index 0)
+          (appkit-media-insert-slice-newline)
+          (when prefix-string
+            (insert prefix-string)))
+        (let ((slice-start (point))
+              (slice (list 0
+                           (* slice-index slice-height)
+                           1.0
+                           slice-height)))
+          (insert-image render-image label nil slice)
+          (appkit-media-add-action-properties
+           slice-start (point) action (or help-echo "Open media"))))
+      (when animated-p
+        (appkit-media--register-inline-animation-occurrence render-image)
+        (appkit-media--install-inline-animation-discovery)))))
 
 (defun appkit-media--char-pixel-width ()
   "Return the default character width in pixels for the current frame."
@@ -434,6 +483,10 @@ return the source image height instead of a character height."
                (ignore-errors (default-line-height))
                (frame-char-height)
                16)))))
+
+(defun appkit-media--base-char-pixel-height ()
+  "Return the unscaled default-face character height in pixels."
+  (max 1 (or (frame-char-height) 16)))
 
 (defun appkit-media--pixels->chars-width (pixels)
   "Convert PIXELS to character columns using current frame metrics."
@@ -476,13 +529,17 @@ return the source image height instead of a character height."
 
 (defun appkit-media-preview-height-chars
     (image-size max-width max-height)
-  "Return preview height for IMAGE-SIZE within MAX-WIDTH and MAX-HEIGHT."
-  (let* ((max-columns
-          (appkit-media--pixels->chars-width max-width))
+  "Return preview row count for IMAGE-SIZE within MAX-WIDTH and MAX-HEIGHT.
+
+MAX-WIDTH and MAX-HEIGHT are a default-scale pixel budget.  Row count
+uses unscaled face metrics so `text-scale-mode' does not shrink N on a
+client that rebuilds the `:height Nch' descriptor."
+  (let* ((character-width (float (appkit-media--char-pixel-width)))
+         (character-height (float (appkit-media--base-char-pixel-height)))
+         (max-columns
+          (max 1 (ceiling (/ (float (max 1 max-width)) character-width))))
          (max-rows
-          (appkit-media--pixels->chars-height max-height))
-         (character-width (float (appkit-media--char-pixel-width)))
-         (character-height (float (appkit-media--char-pixel-height)))
+          (max 1 (ceiling (/ (float (max 1 max-height)) character-height))))
          (image-width (max 1.0 (float (car image-size))))
          (image-height (max 1.0 (float (cdr image-size))))
          (image-columns (/ image-width character-width))
@@ -496,10 +553,16 @@ return the source image height instead of a character height."
 
 (defun appkit-media-preview-image-from-file
     (file &optional max-width max-height)
-  "Create an inline preview image from FILE constrained by pixel limits.
+  "Create a cacheable inline preview from FILE.
 
-MAX-WIDTH and MAX-HEIGHT default to `appkit-media-preview-max-width' and
-`appkit-media-preview-max-height'."
+MAX-WIDTH and MAX-HEIGHT are a default-scale pixel budget and default
+to `appkit-media-preview-max-width' and `appkit-media-preview-max-height'.
+The returned image uses `:height (N . ch)' and `:appkit-media-nslices
+N'.  N uses unscaled face metrics so `text-scale-mode' does not change
+the cached descriptor.  Do not mutate the returned image.
+
+Display is a separate step: call `appkit-media-insert-image-slices' or
+`appkit-media-image-slice-rows' so a copy is sized to N current lines."
   (let* ((safe-max-width
           (max 1 (if (numberp max-width)
                      max-width
@@ -537,14 +600,13 @@ MAX-WIDTH and MAX-HEIGHT default to `appkit-media-preview-max-width' and
          (appkit-media--mark-inline-animation-image image file))))
 
 (defun appkit-media-one-line-preview-image-from-file (file &optional max-width)
-  "Create a one-text-line-high preview for local FILE.
+  "Create a one-row cacheable preview for local FILE.
 
-The image keeps its aspect ratio and tracks text scaling through a `ch' image
-height on modern Emacs.  MAX-WIDTH guides aspect-ratio sizing, but the preview
-never shrinks below one text line.  This is intended for compact composer
-attachment tokens rather than timeline media cards."
+This is `appkit-media-preview-image-from-file' with N constrained to
+one default-scale line.  Display still goes through
+`appkit-media-insert-image-slices' or `appkit-media-image-slice-rows'."
   (appkit-media-preview-image-from-file
-   file max-width (appkit-media--char-pixel-height)))
+   file max-width (appkit-media--base-char-pixel-height)))
 
 (defun appkit-media--bytes-prefix-p (bytes offset prefix-bytes)
   "Return non-nil when BYTES at OFFSET starts with PREFIX-BYTES."

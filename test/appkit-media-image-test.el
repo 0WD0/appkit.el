@@ -208,7 +208,8 @@
                    (insert alt))))
         (appkit-media-insert-image-slices image nil nil "preview"))
       (should (equal (nreverse slices)
-                     '((0 0 1.0 10) (0 10 1.0 10) (0 20 1.0 10)))))))
+                     '((0 0 1.0 10) (0 10 1.0 10) (0 20 1.0 10))))
+      (should (equal (plist-get (cdr image) :appkit-media-nslices) 3)))))
 
 (ert-deftest appkit-media-character-height-uses-target-buffer-window ()
   (with-temp-buffer
@@ -437,10 +438,44 @@
       (when (timerp reset-timer)
         (funcall original-cancel-timer reset-timer)))))
 
+(ert-deftest appkit-media-image-slice-rows-sizes-copy-to-current-line ()
+  "Slice rows must not rewrite a cached `:height Nch' descriptor."
+  (let ((image '(image :type png :height (3 . ch) :appkit-media-nslices 3)))
+    (cl-letf (((symbol-function 'appkit-media-image-object-valid-p)
+               (lambda (_image) nil))
+              ((symbol-function 'appkit-media--char-pixel-height)
+               (lambda () 10)))
+      (let ((rows (appkit-media-image-slice-rows image)))
+        (should (= (length rows) 3))
+        (should (equal (plist-get (cdr image) :height) '(3 . ch)))
+        (cl-loop for row in rows
+                 for index from 0
+                 for display = (get-text-property 0 'display row)
+                 do (should (equal (car display)
+                                   (list 'slice 0 (* index 10) 1.0 10)))
+                 do (should (= (plist-get (cdr (cadr display)) :height)
+                               30)))))))
+
+(ert-deftest appkit-media-insert-image-slices-sizes-copy-to-current-line ()
+  "Insertion must not rewrite a cached `:height Nch' descriptor."
+  (let* ((image '(image :type png :height (3 . ch) :appkit-media-nslices 3))
+         inserted)
+    (cl-letf (((symbol-function 'appkit-media-image-object-valid-p)
+               (lambda (_image) nil))
+              ((symbol-function 'appkit-media--char-pixel-height)
+               (lambda () 10))
+              ((symbol-function 'insert-image)
+               (lambda (img _alt &optional _area _slice)
+                 (push (plist-get (cdr img) :height) inserted)
+                 (insert "x"))))
+      (appkit-media-insert-image-slices image nil nil "preview"))
+    (should (equal (plist-get (cdr image) :height) '(3 . ch)))
+    (should (equal inserted '(30 30 30)))))
+
 (ert-deftest appkit-media-preview-height-preserves-aspect-and-bounds ()
   (cl-letf (((symbol-function 'appkit-media--char-pixel-width)
              (lambda () 10))
-            ((symbol-function 'appkit-media--char-pixel-height)
+            ((symbol-function 'appkit-media--base-char-pixel-height)
              (lambda () 20)))
     ;; 1000x500 becomes 400x200, or ten 20-pixel text rows.
     (should (= 10
@@ -451,6 +486,18 @@
                (appkit-media-preview-height-chars
                 '(100 . 100) 400 300)))))
 
+(ert-deftest appkit-media-preview-height-ignores-remapped-line-height ()
+  "A larger current line must not reduce the default-scale row count."
+  (cl-letf (((symbol-function 'appkit-media--char-pixel-width)
+             (lambda () 10))
+            ((symbol-function 'appkit-media--base-char-pixel-height)
+             (lambda () 20))
+            ((symbol-function 'appkit-media--char-pixel-height)
+             (lambda () 35)))
+    (should (= 10
+               (appkit-media-preview-height-chars
+                '(1000 . 500) 400 300)))))
+
 (ert-deftest appkit-media-preview-image-owns-slice-property ()
   (let ((appkit-media-preview-max-width 400)
         (appkit-media-preview-max-height 200)
@@ -459,6 +506,8 @@
                (lambda (_file) '(800 . 400)))
               ((symbol-function 'appkit-media--char-pixel-width)
                (lambda () 10))
+              ((symbol-function 'appkit-media--base-char-pixel-height)
+               (lambda () 20))
               ((symbol-function 'appkit-media--char-pixel-height)
                (lambda () 20))
               ((symbol-function 'appkit-media-ch-height-spec)
@@ -476,13 +525,15 @@
         (should (= 10
                    (plist-get created-properties
                               :appkit-media-nslices)))
+        (should (equal '(10 . ch)
+                       (plist-get created-properties :height)))
         (should-not (plist-member created-properties :disco-nslices))
         (should-not (plist-member created-properties :telega-nslices))))))
 
-(ert-deftest appkit-media-one-line-preview-uses-current-character-height ()
+(ert-deftest appkit-media-one-line-preview-uses-unscaled-character-height ()
   (let (arguments)
-    (cl-letf (((symbol-function 'appkit-media--char-pixel-height)
-               (lambda () 24))
+    (cl-letf (((symbol-function 'appkit-media--base-char-pixel-height)
+               (lambda () 21))
               ((symbol-function 'appkit-media-preview-image-from-file)
                (lambda (&rest args)
                  (setq arguments args)
@@ -490,7 +541,7 @@
       (should (eq :image
                   (appkit-media-one-line-preview-image-from-file
                    "/tmp/example.png" 300)))
-      (should (equal '("/tmp/example.png" 300 24) arguments)))))
+      (should (equal '("/tmp/example.png" 300 21) arguments)))))
 
 (ert-deftest appkit-media-image-display-string-keeps-fallback-and-display ()
   (let* ((image '(image :type png :data "bytes"))
