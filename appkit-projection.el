@@ -14,6 +14,7 @@
 (require 'ewoc)
 (require 'subr-x)
 (require 'appkit-core)
+(require 'appkit-invalidation)
 (require 'appkit-ewoc)
 (require 'appkit-position)
 (require 'appkit-transaction)
