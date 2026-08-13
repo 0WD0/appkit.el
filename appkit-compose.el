@@ -302,6 +302,12 @@ occupies no frame text."
     (plist-put (appkit-compose--copy-item item)
                :id appkit-compose--serial)))
 
+(defun appkit-compose--item-has-consumer-metadata-p (item)
+  "Return non-nil when ITEM carries meaningful client-owned metadata."
+  (cl-loop for (key value) on item by #'cddr
+           thereis (and (not (memq key '(:id :text)))
+                        value)))
+
 (defun appkit-compose--input-text ()
   "Return the current composer input without text properties."
   (if (appkit-chatbuf-input-start-position)
@@ -344,6 +350,8 @@ occupies no frame text."
         (setf (nth appkit-compose--editing texts) input)
         texts)
        ((or (not (string-empty-p input))
+            (appkit-compose--item-has-consumer-metadata-p
+             appkit-compose--input-item)
             (null texts))
         (append texts (list input)))
        (t texts)))))
@@ -684,11 +692,13 @@ compose app."
                 appkit-compose--input-item (list :attachments nil))))
 
 (defun appkit-compose--flush-input ()
-  "Write back an edit or commit nonempty composer input as a new item."
+  "Write back an edit or commit composer input with content or metadata."
   (cond
    ((integerp appkit-compose--editing)
     (appkit-compose--write-back-edit))
-   ((not (string-empty-p (appkit-compose--input-text)))
+   ((or (not (string-empty-p (appkit-compose--input-text)))
+        (appkit-compose--item-has-consumer-metadata-p
+         appkit-compose--input-item))
     (setq-local appkit-compose--items
                 (append appkit-compose--items
                         (list (appkit-compose--merge-input

@@ -6,7 +6,7 @@
 ;; Maintainer: 0WD0 <wd.1105848296@gmail.com>
 ;; Keywords: lisp, extensions
 ;; URL: https://github.com/0WD0/appkit.el
-;; Version: 0.2.13
+;; Version: 0.2.14
 ;; Package-Requires: ((emacs "27.1") (plz "0.8"))
 
 ;;; Commentary:

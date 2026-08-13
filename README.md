@@ -34,8 +34,9 @@ semantics, remote-frontier and read observations, exhaustion/error
 interpretation, and decisions about when a protocol response reaches latest.
 
 Media callers adapt backend objects into canonical resource descriptors and
-explicit preview metadata.  Appkit owns atomic acquisition, byte-level image
-cache finalization, and preview processes.  Clients own logical cache keys,
+explicit preview metadata.  Appkit owns HTTPS-only atomic acquisition,
+byte-level image cache finalization, lifecycle-bound open transfers, and
+protocol-restricted preview/player processes.  Clients own logical cache keys,
 wire-resource state, and branded faces.
 
 ## Development

@@ -48,6 +48,9 @@
   (make-hash-table :test #'equal)
   "Static video preview images keyed by namespace and source identity.")
 
+(defconst appkit-media--video-input-protocols "file,https,tls,tcp"
+  "FFmpeg protocols allowed while extracting media previews.")
+
 (defun appkit-media--finite-number (value)
   "Return finite numeric VALUE, accepting decimal strings, or nil."
   (cond
@@ -143,18 +146,15 @@ and its TARGET-FILE, or two nil values when extraction fails."
          (known-duration (appkit-media--finite-number duration))
          (source-size (appkit-media--video-source-size source source-size))
          (static-source
-          (if (or (appkit-media-file-present-p preview-source)
-                  (appkit-media-url-present-p preview-source))
+          (if (appkit-media--local-or-https-source-p preview-source)
               preview-source
             source))
          (animated-p
-          (and (or (appkit-media-file-present-p source)
-                   (appkit-media-url-present-p source))
+          (and (appkit-media--local-or-https-source-p source)
                (appkit-media--video-animation-eligible-p
                 source source-size known-duration))))
     (if (or (not ffmpeg)
-            (not (or (appkit-media-file-present-p static-source)
-                     (appkit-media-url-present-p static-source))))
+            (not (appkit-media--local-or-https-source-p static-source)))
         (funcall callback nil nil)
       (let* ((extension (if animated-p "gif" "jpg"))
              (target-file (format "%s.%s" cache-base extension))
@@ -163,6 +163,8 @@ and its TARGET-FILE, or two nil values when extraction fails."
               (if animated-p
                   (list ffmpeg
                         "-nostdin" "-y" "-loglevel" "error"
+                        "-protocol_whitelist"
+                        appkit-media--video-input-protocols
                         "-i" input-source
                         "-t" (format "%.3f" known-duration)
                         "-filter_complex"
@@ -170,6 +172,8 @@ and its TARGET-FILE, or two nil values when extraction fails."
                         "-an" "-loop" "0" target-file)
                 (list ffmpeg
                       "-nostdin" "-y" "-loglevel" "error"
+                      "-protocol_whitelist"
+                      appkit-media--video-input-protocols
                       "-i" input-source
                       "-vf"
                       (concat "thumbnail=24,scale=960:-2:"
