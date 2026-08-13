@@ -18,6 +18,7 @@
 (require 'appkit-chat-timeline)
 (require 'appkit-chatbuf)
 (require 'appkit-core)
+(require 'appkit-ui)
 
 (appkit-define-app-kind appkit-compose)
 
@@ -86,17 +87,7 @@ optional `:progress' as a 0-1 float, and optional `:cancel-function'.")
 
 WIDTH defaults to 10.  Nil or non-positive PROGRESS yields an empty
 track.  The filled portion uses `=' characters with a trailing `>'."
-  (let* ((width (max 1 (or width 10)))
-         (ratio (if (and (numberp progress) (> progress 0))
-                    (min 1.0 (max 0.0 (float progress)))
-                  0.0))
-         (filled (min width (round (* width ratio)))))
-    (cond
-     ((= filled 0) (make-string width ?\s))
-     ((= filled 1) (concat ">" (make-string (1- width) ?\s)))
-     (t (concat (make-string (1- filled) ?=)
-                ">"
-                (make-string (- width filled) ?\s))))))
+  (appkit-ui-progress-bar progress width '(?= . ?>) ?\s))
 
 (defun appkit-compose-progress-text ()
   "Return the current submit status string, or nil when idle.

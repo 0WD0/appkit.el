@@ -299,6 +299,119 @@ HELP-ECHO decorate the inserted span.  Return the inserted span."
       (format " (%s)" (string-join details ", "))
     ""))
 
+(defun appkit-chat-ins--byte-count (value)
+  "Return VALUE as a non-negative integer byte count, or nil."
+  (cond
+   ((and (integerp value) (>= value 0)) value)
+   ((and (numberp value) (>= value 0) (= value value))
+    (truncate value))
+   ((and (stringp value) (string-match-p "\\`[0-9]+\\'" value))
+    (string-to-number value))
+   (t nil)))
+
+(defun appkit-chat-ins-transfer-measure (progress bytes-done bytes-total)
+  "Return compact transfer measure text, or nil.
+
+BYTES-DONE and BYTES-TOTAL may be integers or decimal strings.  When both
+are known the text is `DONE/TOTAL'.  PROGRESS is used as a 0-1 percent
+only when byte counts are absent."
+  (let ((done (or (appkit-chat-ins--byte-count bytes-done)
+                  (and (stringp bytes-done)
+                       (not (string-empty-p bytes-done))
+                       bytes-done)))
+        (total (or (appkit-chat-ins--byte-count bytes-total)
+                   (and (stringp bytes-total)
+                        (not (string-empty-p bytes-total))
+                        bytes-total))))
+    (cond
+     ((and done total) (format "%s/%s" done total))
+     (done (format "%s" done))
+     ((and (numberp progress) (<= 0 progress) (<= progress 1))
+      (format "%d%%" (round (* 100 progress)))))))
+
+(defun appkit-chat-ins--transfer-ratio (progress bytes-done bytes-total)
+  "Return a 0-1 ratio from BYTES-DONE/BYTES-TOTAL or PROGRESS."
+  (or (let ((done (appkit-chat-ins--byte-count bytes-done))
+            (total (appkit-chat-ins--byte-count bytes-total)))
+        (when (and done total (> total 0))
+          (min 1.0 (max 0.0 (/ (float done) (float total))))))
+      (and (numberp progress)
+           (<= 0 progress)
+           (<= progress 1)
+           (float progress))))
+
+(cl-defun appkit-chat-ins-transfer-text
+    (&key direction state progress bytes-done bytes-total (bar-width 10))
+  "Return protocol-neutral transfer control text, or nil.
+
+DIRECTION is `upload' or `download'.  STATE is `idle', `active',
+`paused', or `failed'.  PROGRESS is an optional 0-1 float.  BYTES-DONE
+and BYTES-TOTAL are optional integer or decimal-string counts.  BAR-WIDTH
+is the track width.  The bar uses `+' for upload and `=' for download; a
+paused transfer uses a pause tip.  Clients own what the ratio means."
+  (unless (memq direction '(upload download))
+    (error "Appkit transfer direction is invalid: %S" direction))
+  (unless (memq state '(nil idle active paused failed))
+    (error "Appkit transfer state is invalid: %S" state))
+  (let* ((state (or state 'idle))
+         (ratio (appkit-chat-ins--transfer-ratio
+                 progress bytes-done bytes-total))
+         (measure (appkit-chat-ins-transfer-measure
+                   progress bytes-done bytes-total))
+         (show-bar (memq state '(active paused)))
+         (filled (cons (if (eq direction 'upload) ?+ ?=)
+                       (if (eq state 'paused) ?⏸ ?>)))
+         (bar (and show-bar
+                   (appkit-ui-progress-bar ratio bar-width filled ?\s))))
+    (cond
+     ((and bar measure) (format "[%s] %s" bar measure))
+     (bar (format "[%s]" bar))
+     (measure measure)
+     (t nil))))
+
+(cl-defun appkit-chat-ins-insert-transfer
+    (&key direction state progress bytes-done bytes-total
+          action action-label help-echo prefix face properties
+          (bar-width 10))
+  "Insert one protocol-neutral transfer control line.
+
+DIRECTION, STATE, PROGRESS, BYTES-DONE, BYTES-TOTAL, and BAR-WIDTH are
+as in `appkit-chat-ins-transfer-text'.  ACTION is an optional
+zero-argument callback shown as ACTION-LABEL, defaulting to Cancel when
+STATE is `active' and Download otherwise.  PREFIX, FACE, PROPERTIES, and
+HELP-ECHO decorate the line.  Return the inserted span, or nil when the
+control is empty."
+  (let* ((text (appkit-chat-ins-transfer-text
+                :direction direction
+                :state state
+                :progress progress
+                :bytes-done bytes-done
+                :bytes-total bytes-total
+                :bar-width bar-width))
+         (label
+          (and (functionp action)
+               (or action-label
+                   (if (eq state 'active) "Cancel" "Download"))))
+         (start (point)))
+    (when (or text label)
+      (when text
+        (insert text))
+      (when label
+        (when text
+          (insert "  "))
+        (appkit-ui-insert-action-button
+         (format "[%s]" label)
+         action
+         :face face
+         :help-echo (or help-echo label)))
+      (insert "\n")
+      (appkit-ui-apply-line-prefix start (point) (or prefix "    "))
+      (when properties
+        (add-text-properties start (point) properties))
+      (when (and face text)
+        (appkit-ui-append-face start (+ start (length text)) face))
+      (cons start (point)))))
+
 (defun appkit-chat-ins-media-transfer-status-text (state)
   "Return compact transfer status text for normalized media STATE.
 
@@ -329,16 +442,18 @@ space."
      status :prefix (or prefix "    ") :face face)))
 
 (cl-defun appkit-chat-ins-insert-media-card
-    (&key kind title details meta status prefix border-face title-face meta-face
-          properties context open-action open-help-echo body-inserter)
+    (&key kind title details meta status transfer prefix border-face
+          title-face meta-face properties context open-action
+          open-help-echo body-inserter)
   "Insert one backend-neutral compact media card.
 
-KIND, TITLE, DETAILS, META, and STATUS describe presentation only.  CONTEXT is
-a `appkit-media-card-context-create' value stored as a text property across the
-card, so message transients can target the exact attachment/segment at point.
-PREFIX supplies a string or mutable prefix state; BORDER-FACE styles the
-default card border when PREFIX is absent.  TITLE-FACE and META-FACE style the
-corresponding rows.
+KIND, TITLE, DETAILS, META, and STATUS describe presentation only.
+TRANSFER is an optional plist for `appkit-chat-ins-insert-transfer'.
+CONTEXT is a `appkit-media-card-context-create' value stored as a text
+property across the card, so message transients can target the exact
+attachment/segment at point.  PREFIX supplies a string or mutable prefix
+state; BORDER-FACE styles the default card border when PREFIX is absent.
+TITLE-FACE and META-FACE style the corresponding rows.
 OPEN-ACTION defaults to the context's open callback.  BODY-INSERTER, when
 non-nil, receives the mutable prefix-state and inserts previews, captions, or
 stateful controls owned by the client adapter.  PROPERTIES are applied across
@@ -363,6 +478,9 @@ the final card span."
     (when (and (stringp meta-text) (not (string-empty-p meta-text)))
       (appkit-chat-ins-insert-prefixed-line
        meta-text :prefix prefix-state :face meta-face))
+    (when (and transfer (listp transfer))
+      (apply #'appkit-chat-ins-insert-transfer
+             :prefix prefix-state :face meta-face transfer))
     (appkit-chat-ins-insert-media-status-line
      status :prefix prefix-state :face meta-face)
     (when (functionp body-inserter)

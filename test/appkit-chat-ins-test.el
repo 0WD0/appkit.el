@@ -95,6 +95,19 @@
       (should (equal "│ "
                      (get-text-property (car span) 'line-prefix))))))
 
+(ert-deftest appkit-chat-ins-insert-media-card-renders-transfer-control ()
+  (with-temp-buffer
+    (appkit-chat-ins-insert-media-card
+     :kind 'file
+     :title "notes.pdf"
+     :transfer (list :direction 'upload
+                     :state 'active
+                     :bytes-done 128
+                     :bytes-total 256
+                     :bar-width 10))
+    (should (string-match-p "\\[\\+\\+\\+\\+>     \\] 128/256"
+                            (buffer-string)))))
+
 (ert-deftest appkit-chat-ins-voice-note-text-clamps-progress-and-formats-hours ()
   (should
    (equal
@@ -112,6 +125,54 @@
      :played-seconds 0
      :bar-width 3)
     "▶ ─── 0:00 / --:--")))
+
+(ert-deftest appkit-chat-ins-transfer-text-uses-bytes-and-direction ()
+  (should (equal (appkit-chat-ins-transfer-measure 0.25 "4096" "8192")
+                 "4096/8192"))
+  (should (equal (appkit-chat-ins-transfer-measure 0.25 nil nil) "25%"))
+  (should (equal
+           (appkit-chat-ins-transfer-text
+            :direction 'download
+            :state 'active
+            :bytes-done 4096
+            :bytes-total 8192
+            :bar-width 10)
+           "[====>     ] 4096/8192"))
+  (should (equal
+           (appkit-chat-ins-transfer-text
+            :direction 'upload
+            :state 'active
+            :progress 0.5
+            :bar-width 10)
+           "[++++>     ] 50%"))
+  (should (string-match-p "⏸"
+                          (appkit-chat-ins-transfer-text
+                           :direction 'download
+                           :state 'paused
+                           :progress 0.5
+                           :bar-width 4))))
+
+(ert-deftest appkit-chat-ins-insert-transfer-keeps-action-on-the-button ()
+  (with-temp-buffer
+    (let (canceled)
+      (let ((span
+             (appkit-chat-ins-insert-transfer
+              :direction 'download
+              :state 'active
+              :bytes-done 4096
+              :bytes-total 8192
+              :action (lambda () (setq canceled t))
+              :action-label "Cancel"
+              :prefix "│ ")))
+        (should (string-match-p "\\[====>     \\] 4096/8192"
+                                (buffer-string)))
+        (should (string-match-p "\\[Cancel\\]" (buffer-string)))
+        (should (equal "│ "
+                       (get-text-property (car span) 'line-prefix)))
+        (goto-char (point-min))
+        (search-forward "[Cancel]")
+        (push-button (match-beginning 0))
+        (should canceled)))))
 
 (ert-deftest appkit-chat-ins-insert-voice-note-owns-control-and-action-shape ()
   (with-temp-buffer

@@ -10,6 +10,12 @@
     (vector (list 'down-mouse-1 posn)
             (list 'mouse-1 posn))))
 
+(ert-deftest appkit-ui-progress-bar-fills-from-ratio-and-glyph ()
+  (should (equal (appkit-ui-progress-bar 0 10) "          "))
+  (should (equal (appkit-ui-progress-bar 0.5 10) "====>     "))
+  (should (equal (appkit-ui-progress-bar 0.5 10 '(?+ . ?>)) "++++>     "))
+  (should (equal (length (appkit-ui-progress-bar 1 10)) 10)))
+
 (ert-deftest appkit-ui-add-action-activates-from-ret-and-point ()
   (with-temp-buffer
     (let ((called 0))
