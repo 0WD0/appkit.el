@@ -1,0 +1,46 @@
+#+title: appkit.el
+#+options: toc:nil num:nil
+
+* What it is
+
+Appkit is a protocol-neutral runtime for stateful Emacs clients.  It
+owns application and view lifecycle, keyed projections, chat
+composers, and reusable presentation geometry.  Client packages own
+protocol models, transport, and branding.
+
+Current consumers include ~disco.el~, ~emacs-qq~, ~emacs-zulip~, and
+~chirp~.  Appkit does not define Discord, QQ, channel, or message
+models.
+
+* Depend
+
+Sibling packages load it as a local file dependency:
+
+#+begin_src emacs-lisp
+(depends-on "appkit" :file "../appkit.el")
+#+end_src
+
+No consumer compatibility aliases are provided.  Use the public
+~appkit-*-~ namespaces directly.
+
+* Documentation
+
+Human-facing docs in this family use Org.  Glossaries, ADRs, and
+changelogs stay Markdown because agents and release tools already
+consume those files.
+
+- [[file:docs/integrator.org][Integrator guide]] — ownership, surfaces, update model, and tests
+- [[file:CONTEXT.md][Language]] — shared terms such as compose submit and transfer control
+- [[file:docs/adr/][Decisions]] — accepted architectural trade-offs
+
+* Development
+
+Eask owns package activation and load paths:
+
+#+begin_src sh
+eask recompile
+scripts/eask-ert-brief test/*.el
+#+end_src
+
+The brief runner recompiles immediately before testing and forwards
+its arguments to ~eask test ert~.
