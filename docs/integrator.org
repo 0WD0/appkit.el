@@ -66,11 +66,21 @@ Set ~appkit-chatbuf-input-sync-function~ to synchronize
 protocol-specific draft state.  Do not install a second after-change
 controller.
 
-Store reply/edit ownership in ~appkit-chatbuf-aux-set~, then render its
-client-owned title and preview with ~appkit-chatbuf-aux-render~.  The
-shared renderer supplies the bounded two-line card, accent, and cancel
-action; clients retain protocol objects, labels, identity faces, and
-preview extraction.
+Construct compact content with
+~appkit-ui-one-line-preview-create~.  Its optional propertized prefix
+is atomic, uses its underlying text as the terminal fallback, and
+declares its graphical width with ~:prefix-columns~.  Appkit preserves
+display properties, styles only the textual leading span, and bounds the
+combined fragment through ~appkit-ui-render-one-line-preview~.
+
+Pass the same preview model as ~:preview~ to
+~appkit-view-one-line-row-create~ or ~appkit-chatbuf-aux-render~.  The
+directory renderer places it in one row column; the chatbuf renderer
+places it on the second line of the reply/edit card.  One-line rows accept
+~:context-open~ and ~:context-close~ delimiters; Appkit measures their actual
+display widths and owns their geometry while the client selects their
+presentation meaning.  Clients retain protocol objects, media selection and
+acquisition, labels, identity faces, and resource invalidation.
 
 ** Discussion
 

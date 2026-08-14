@@ -72,6 +72,51 @@
       (should (equal image-properties
                      '(:ascent center :width 21 :height 21))))))
 
+(ert-deftest appkit-media-one-line-thumbnail-clips-into-fixed-box ()
+  (let (rectangle-call embed-call image-properties)
+    (cl-letf (((symbol-function 'file-readable-p) (lambda (_file) t))
+              ((symbol-function 'image-type-available-p)
+               (lambda (type) (eq type 'svg)))
+              ((symbol-function 'appkit-media-image-mime-type)
+               (lambda (_file) "image/png"))
+              ((symbol-function 'svg-create)
+               (lambda (width height) (list :svg width height)))
+              ((symbol-function 'svg-clip-path)
+               (lambda (_svg &rest _properties) :clip))
+              ((symbol-function 'svg-rectangle)
+               (lambda (&rest arguments)
+                 (setq rectangle-call arguments)))
+              ((symbol-function 'svg-embed)
+               (lambda (&rest arguments)
+                 (setq embed-call arguments)))
+              ((symbol-function 'svg-image)
+               (lambda (_svg &rest properties)
+                 (setq image-properties properties)
+                 '(image :type svg :data "thumbnail")))
+              ((symbol-function 'appkit-media-image-object-valid-p)
+               (lambda (_image) t)))
+      (let ((image
+             (appkit-media--one-line-thumbnail-from-file
+              "/tmp/source.png" 40 20)))
+        (should (= 1 (plist-get (cdr image) :appkit-media-nslices)))
+        (should
+         (equal rectangle-call
+                '(:clip 0 0 40 20 :rx 4.0 :ry 4.0)))
+        (should
+         (equal (seq-take embed-call 4)
+                '((:svg 40 20) "/tmp/source.png" "image/png" nil)))
+        (should
+         (equal
+          (plist-get (nthcdr 4 embed-call) :preserveAspectRatio)
+          "xMidYMid slice"))
+        (should
+         (equal
+          (plist-get (nthcdr 4 embed-call) :clip-path)
+          "url(#appkit-one-line-thumbnail-clip)"))
+        (should
+         (equal image-properties
+                '(:ascent center :width 40 :height 20 :scale 1.0)))))))
+
 (ert-deftest appkit-media-marks-only-bounded-multi-frame-previews ()
   (let ((appkit-media-inline-animation-enabled t)
         (appkit-media-inline-animation-max-duration 10)
@@ -112,9 +157,9 @@
 (ert-deftest appkit-media-start-inline-animation-is-one-bounded-cycle ()
   (let ((appkit-media-inline-animation-enabled t)
         (image '(image :type gif
-                       :appkit-media-inline-animation t
-                       :appkit-media-inline-animation-occurrence t
-                       :appkit-media-inline-animation-duration 2.0))
+                 :appkit-media-inline-animation t
+                 :appkit-media-inline-animation-occurrence t
+                 :appkit-media-inline-animation-duration 2.0))
         animated
         reset-delay)
     (with-temp-buffer
@@ -136,9 +181,9 @@
 
 (ert-deftest appkit-media-stop-inline-animation-resets-state ()
   (let ((image '(image :type gif
-                       :appkit-media-inline-animation t
-                       :appkit-media-inline-animation-occurrence t
-                       :appkit-media-inline-animation-played t))
+                 :appkit-media-inline-animation t
+                 :appkit-media-inline-animation-occurrence t
+                 :appkit-media-inline-animation-played t))
         shown-frame)
     (cl-letf (((symbol-function 'image-animate-timer)
                (lambda (_image) nil))
@@ -276,9 +321,9 @@
 (ert-deftest appkit-media-animation-insertion-keeps-descriptor-immutable ()
   (let* ((descriptor
           '(image :type gif
-                  :appkit-media-nslices 1
-                  :appkit-media-inline-animation t
-                  :appkit-media-inline-animation-duration 2.0))
+            :appkit-media-nslices 1
+            :appkit-media-inline-animation t
+            :appkit-media-inline-animation-duration 2.0))
          (snapshot (copy-tree descriptor))
          occurrences)
     (with-temp-buffer
@@ -326,9 +371,9 @@
 (ert-deftest appkit-media-animation-occurrences-are-buffer-local ()
   (let ((descriptor
          '(image :type gif
-                 :appkit-media-nslices 1
-                 :appkit-media-inline-animation t
-                 :appkit-media-inline-animation-duration 2.0))
+           :appkit-media-nslices 1
+           :appkit-media-inline-animation t
+           :appkit-media-inline-animation-duration 2.0))
         (first-buffer (generate-new-buffer " *appkit-animation-first*"))
         (second-buffer (generate-new-buffer " *appkit-animation-second*"))
         first-occurrence
@@ -379,9 +424,9 @@
 (ert-deftest appkit-media-kill-buffer-stops-animation-occurrences ()
   (let* ((descriptor
           '(image :type gif
-                  :appkit-media-nslices 1
-                  :appkit-media-inline-animation t
-                  :appkit-media-inline-animation-duration 2.0))
+            :appkit-media-nslices 1
+            :appkit-media-inline-animation t
+            :appkit-media-inline-animation-duration 2.0))
          (buffer (generate-new-buffer " *appkit-animation-teardown*"))
          (animation-timer (run-at-time 3600 nil #'ignore))
          (reset-timer (run-at-time 3600 nil #'ignore))
@@ -528,11 +573,11 @@
         (should-not (plist-member created-properties :disco-nslices))
         (should-not (plist-member created-properties :telega-nslices))))))
 
-(ert-deftest appkit-media-one-line-preview-uses-unscaled-character-height ()
+(ert-deftest appkit-media-one-line-preview-uses-fixed-box-geometry ()
   (let (arguments)
     (cl-letf (((symbol-function 'appkit-media--base-char-pixel-height)
                (lambda () 21))
-              ((symbol-function 'appkit-media-preview-image-from-file)
+              ((symbol-function 'appkit-media--one-line-thumbnail-from-file)
                (lambda (&rest args)
                  (setq arguments args)
                  :image)))
@@ -548,6 +593,25 @@
     (should (eq image (get-text-property 0 'display rendered)))
     (should (equal "[image]"
                    (appkit-media-image-display-string nil "[image]")))))
+
+(ert-deftest appkit-media-one-line-display-projects-current-line-slice ()
+  (let* ((image '(image :type png :data "bytes"
+                  :height (1 . ch) :appkit-media-nslices 1))
+         (original (copy-tree image)))
+    (cl-letf (((symbol-function 'appkit-media--line-slice-geometry)
+               (lambda (_image)
+                 '((image :type png :data "bytes" :height 19) 1 19))))
+      (let* ((rendered
+              (appkit-media-one-line-image-display-string image "[image]"))
+             (display (get-text-property 0 'display rendered)))
+        (should (equal "[image]" (substring-no-properties rendered)))
+        (should (equal '(slice 0 0 1.0 19) (car display)))
+        (should (= 19 (plist-get (cdr (cadr display)) :height)))
+        (should (equal original image))
+        (should
+         (equal "[image]"
+                (appkit-media-one-line-image-display-string
+                 nil "[image]")))))))
 
 (ert-deftest appkit-media-normalizes-known-image-leading-newline ()
   (let* ((png (concat (unibyte-string 137 80 78 71 13 10 26 10) "data"))

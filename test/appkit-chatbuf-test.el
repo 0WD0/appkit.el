@@ -244,7 +244,7 @@
   (with-temp-buffer
     (appkit-chatbuf-install-prompt ">>> ")
     (appkit-chatbuf-input-insert "[file:a.txt]"
-                                :object '(:type file :path "/tmp/a.txt"))
+                                 :object '(:type file :path "/tmp/a.txt"))
     (goto-char (appkit-chatbuf-input-start-position))
     (should (equal '(:type file :path "/tmp/a.txt")
                    (appkit-chatbuf-input-object-at-point)))
@@ -438,7 +438,7 @@
     (appkit-chatbuf-init-state 8)
     (appkit-chatbuf-install-prompt ">>> ")
     (appkit-chatbuf-input-insert "[file:a.txt]"
-                                :object '(:type file :path "/tmp/a.txt"))
+                                 :object '(:type file :path "/tmp/a.txt"))
     (appkit-chatbuf-input-history-push "plain text")
     (should (equal '("plain text")
                    (appkit-chatbuf-input-history-elements)))))
@@ -475,12 +475,9 @@
   (let (cancelled)
     (with-temp-buffer
       (insert
-       (appkit-chatbuf-aux-render
-        :title "Reply to Alice"
-        :preview "  (sticker)\n preview  "
-        :cancel-action (lambda () (setq cancelled t))
-        :cancel-help "Cancel reply"
-        :width 40))
+       (appkit-chatbuf-aux-render :title "Reply to Alice" :preview (appkit-ui-one-line-preview-create :text "  (sticker)\n preview  ") :cancel-action (lambda () (setq cancelled t))
+				  :cancel-help "Cancel reply"
+				  :width 40))
       (should
        (equal "× ▏ Reply to Alice\n  ▏ (sticker) preview\n"
               (buffer-substring-no-properties (point-min) (point-max))))
@@ -493,12 +490,36 @@
       (should (appkit-ui-activate-at))
       (should cancelled))))
 
+(ert-deftest appkit-chatbuf-aux-render-keeps-image-separate-from-close-action ()
+  (let* ((image '(image :type png :data "bytes"))
+         (preview
+          (appkit-ui-one-line-preview-create
+           :text "caption"
+           :visual (propertize "[image]" 'display image)
+           :visual-columns 2))
+         (action #'ignore))
+    (cl-letf (((symbol-function 'display-graphic-p) (lambda (&rest _) t))
+              ((symbol-function 'display-images-p) (lambda (&rest _) t)))
+      (with-temp-buffer
+        (insert
+         (appkit-chatbuf-aux-render
+          :title "Reply to Alice"
+          :preview preview
+          :cancel-action action
+          :width 32))
+        (should (= 2 (count-lines (point-min) (point-max))))
+        (should (eq action
+                    (get-text-property
+                     (point-min) appkit-ui-action-property)))
+        (let ((image-position
+               (text-property-any (point-min) (point-max) 'display image)))
+          (should image-position)
+          (should-not
+           (get-text-property image-position appkit-ui-action-property)))))))
+
 (ert-deftest appkit-chatbuf-aux-render-bounds-both-lines ()
   (let* ((card
-          (appkit-chatbuf-aux-render
-           :title "Reply to a very long display name"
-           :preview "a long preview that cannot escape the card"
-           :width 16))
+          (appkit-chatbuf-aux-render :title "Reply to a very long display name" :preview (appkit-ui-one-line-preview-create :text "a long preview that cannot escape the card") :width 16))
          (lines (split-string (substring-no-properties card) "\n" t)))
     (should (= 2 (length lines)))
     (dolist (line lines)
