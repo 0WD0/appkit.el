@@ -17,6 +17,7 @@
 (require 'subr-x)
 (require 'appkit-core)
 (require 'appkit-transaction)
+(require 'appkit-ui)
 
 (defcustom appkit-chatbuf-input-ring-size 50
   "Default size for shared chat buffer input history rings."
@@ -26,6 +27,26 @@
 (defface appkit-chatbuf-input-object
   '((t :inherit shadow))
   "Face used for structured input objects inserted into chatbuf input."
+  :group 'appkit)
+
+(defface appkit-chatbuf-aux-title
+  '((t :inherit bold))
+  "Face used for the title of an active composer context."
+  :group 'appkit)
+
+(defface appkit-chatbuf-aux-preview
+  '((t :inherit shadow))
+  "Face used for the one-line preview of an active composer context."
+  :group 'appkit)
+
+(defface appkit-chatbuf-aux-accent
+  '((t :inherit font-lock-keyword-face))
+  "Face used for the vertical accent in composer context cards."
+  :group 'appkit)
+
+(defface appkit-chatbuf-aux-close
+  '((t :inherit link))
+  "Face used for the composer context cancel action."
   :group 'appkit)
 
 (defconst appkit-chatbuf-input-object-property 'appkit-chatbuf-input-object
@@ -925,6 +946,67 @@ negative N delegates to `appkit-chatbuf-input-backward-delete'."
 (defun appkit-chatbuf-aux-active-p ()
   "Return non-nil when a shared aux state is currently active."
   (not (null appkit-chatbuf--aux-plist)))
+
+(defun appkit-chatbuf--aux-one-line (text width face)
+  "Return TEXT normalized, styled with FACE, and truncated to WIDTH."
+  (let* ((normalized
+          (string-trim
+           (replace-regexp-in-string "[[:space:]]+" " " (or text ""))))
+         (line (truncate-string-to-width normalized (max 1 width)
+                                         nil nil "…")))
+    (when (and face (not (string-empty-p line)))
+      (add-face-text-property 0 (length line) face 'append line))
+    line))
+
+(cl-defun appkit-chatbuf-aux-render
+    (&key title preview cancel-action cancel-help title-face preview-face
+          accent-face width)
+  "Return a unified two-line composer context card.
+
+TITLE and PREVIEW are client-owned presentation strings.  Embedded whitespace
+is collapsed and both rows are truncated to WIDTH, which defaults to the
+current `fill-column'.  CANCEL-ACTION is an optional zero-argument function
+attached to the visible ×.  Client-specific faces may be supplied with
+TITLE-FACE, PREVIEW-FACE, and ACCENT-FACE; shared theme-friendly faces are used
+otherwise.  The returned string ends in one newline, or is empty when TITLE is
+empty."
+  (let* ((card-width (max 12 (or width
+                                 (and (integerp fill-column) fill-column)
+                                 80)))
+         (content-width (max 1 (- card-width 4)))
+         (title
+          (appkit-chatbuf--aux-one-line
+           title content-width (or title-face 'appkit-chatbuf-aux-title)))
+         (preview
+          (appkit-chatbuf--aux-one-line
+           preview content-width (or preview-face 'appkit-chatbuf-aux-preview))))
+    (if (string-empty-p title)
+        ""
+      (let* ((accent
+              (propertize "▏" 'face
+                          (or accent-face 'appkit-chatbuf-aux-accent)))
+             (close
+              (if (functionp cancel-action)
+                  (propertize
+                   "×"
+                   'face 'appkit-chatbuf-aux-close
+                   appkit-ui-action-property cancel-action
+                   'keymap appkit-ui-action-map
+                   'mouse-face 'highlight
+                   'pointer 'hand
+                   'help-echo (or cancel-help "Cancel composer context")
+                   'rear-nonsticky
+                   (list 'face 'keymap 'mouse-face 'pointer 'help-echo
+                         appkit-ui-action-property))
+                " "))
+             (card
+              (concat close " " accent " " title "\n"
+                      (unless (string-empty-p preview)
+                        (concat "  " accent " " preview "\n")))))
+        (add-text-properties 0 (length card)
+                             '(appkit-chatbuf-aux-ui t)
+                             card)
+        card))))
 
 (defun appkit-chatbuf-composer-idle-p ()
   "Return non-nil when the canonical composer has no active content.
