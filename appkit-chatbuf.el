@@ -963,13 +963,13 @@ negative N delegates to `appkit-chatbuf-input-backward-delete'."
           accent-face width)
   "Return a unified two-line composer context card.
 
-TITLE and PREVIEW are client-owned presentation strings.  Embedded whitespace
-is collapsed and both rows are truncated to WIDTH, which defaults to the
-current `fill-column'.  CANCEL-ACTION is an optional zero-argument function
-attached to the visible ×.  Client-specific faces may be supplied with
-TITLE-FACE, PREVIEW-FACE, and ACCENT-FACE; shared theme-friendly faces are used
-otherwise.  The returned string ends in one newline, or is empty when TITLE is
-empty."
+TITLE is client-owned presentation text.  PREVIEW must be an
+`appkit-ui-one-line-preview'.  Both rows are bounded to WIDTH, which defaults
+to the current `fill-column'.  CANCEL-ACTION is an optional zero-argument
+function attached to the visible ×.  Client-specific faces may be supplied
+with TITLE-FACE, PREVIEW-FACE, and ACCENT-FACE; shared theme-friendly faces
+are used otherwise.  The returned string ends in one newline, or is empty
+when TITLE is empty."
   (let* ((card-width (max 12 (or width
                                  (and (integerp fill-column) fill-column)
                                  80)))
@@ -978,8 +978,9 @@ empty."
           (appkit-chatbuf--aux-one-line
            title content-width (or title-face 'appkit-chatbuf-aux-title)))
          (preview
-          (appkit-chatbuf--aux-one-line
-           preview content-width (or preview-face 'appkit-chatbuf-aux-preview))))
+          (appkit-ui-render-one-line-preview
+           preview content-width
+           :face (or preview-face 'appkit-chatbuf-aux-preview))))
     (if (string-empty-p title)
         ""
       (let* ((accent

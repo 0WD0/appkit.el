@@ -177,6 +177,49 @@ back to nil so applications can retain their ordinary square image path."
               (and (appkit-media-image-object-valid-p image) image))))
       (error nil))))
 
+(defun appkit-media--one-line-thumbnail-from-file
+    (file pixel-width pixel-height)
+  "Return FILE center-cropped to a one-line thumbnail.
+
+PIXEL-WIDTH and PIXEL-HEIGHT are the exact output box.  The source is
+embedded in an SVG so a large source image cannot escape the compact
+container's geometry."
+  (when (and (stringp file)
+             (file-readable-p file)
+             (numberp pixel-width)
+             (> pixel-width 0)
+             (numberp pixel-height)
+             (> pixel-height 0)
+             (image-type-available-p 'svg)
+             (fboundp 'svg-create)
+             (fboundp 'svg-clip-path)
+             (fboundp 'svg-rectangle)
+             (fboundp 'svg-embed)
+             (fboundp 'svg-image))
+    (condition-case nil
+        (when-let* ((mime-type (appkit-media-image-mime-type file)))
+          (let* ((width (max 1 (round pixel-width)))
+                 (height (max 1 (round pixel-height)))
+                 (radius (max 1 (/ (min width height) 5.0)))
+                 (svg (svg-create width height))
+                 (clip
+                  (svg-clip-path
+                   svg :id "appkit-one-line-thumbnail-clip")))
+            (svg-rectangle clip 0 0 width height :rx radius :ry radius)
+            (svg-embed
+             svg file mime-type nil
+             :x 0 :y 0 :width width :height height
+             :preserveAspectRatio "xMidYMid slice"
+             :clip-path "url(#appkit-one-line-thumbnail-clip)")
+            (let ((image
+                   (svg-image
+                    svg :ascent 'center :width width :height height
+                    :scale 1.0)))
+              (when (appkit-media-image-object-valid-p image)
+                (plist-put (cdr image) :appkit-media-nslices 1)
+                image))))
+      (error nil))))
+
 (defun appkit-media--file-size (file)
   "Return FILE size in bytes, or nil when it is unavailable."
   (when (and (stringp file) (file-exists-p file))
@@ -235,6 +278,32 @@ registry functions."
       (propertize (or fallback " ")
                   'display render-image
                   'rear-nonsticky '(display)))))
+
+(defun appkit-media-one-line-image-display-string (image fallback)
+  "Return FALLBACK displayed as a current-line thumbnail for IMAGE.
+
+IMAGE should come from `appkit-media-one-line-preview-image-from-file'.
+The cached descriptor is copied and sized to the current line in pixels;
+the original is not mutated.  FALLBACK remains the underlying terminal
+text.  Return FALLBACK unchanged when IMAGE is nil."
+  (if (not image)
+      fallback
+    (let* ((animated-p (appkit-media-inline-animation-image-p image))
+           (source-image
+            (if animated-p
+                (appkit-media--make-inline-animation-occurrence image)
+              image)))
+      (pcase-let ((`(,render-image ,_slice-count ,slice-height)
+                   (appkit-media--line-slice-geometry source-image)))
+        (when animated-p
+          (appkit-media--register-inline-animation-occurrence render-image)
+          (appkit-media--install-inline-animation-discovery))
+        (propertize
+         (or fallback " ")
+         'display
+         (list (list 'slice 0 0 1.0 slice-height)
+               render-image)
+         'rear-nonsticky '(display))))))
 
 (defun appkit-media-stop-inline-animation (image)
   "Stop bounded inline playback for IMAGE and reset it to frame zero."
@@ -592,14 +661,28 @@ Display is a separate step: call `appkit-media-insert-image-slices' or
          (appkit-media--mark-inline-animation-image image file))))
 
 (defun appkit-media-one-line-preview-image-from-file (file &optional max-width)
-  "Create a one-row cacheable preview for local FILE.
+  "Create a bounded one-row thumbnail for local FILE.
 
-MAX-WIDTH optionally bounds the rendered width.  This is
-`appkit-media-preview-image-from-file' constrained to one default-scale line.
-Display still goes through `appkit-media-insert-image-slices' or
-`appkit-media-image-slice-rows'."
-  (appkit-media-preview-image-from-file
-   file max-width (appkit-media--base-char-pixel-height)))
+MAX-WIDTH is the rendered pixel width and defaults to
+`appkit-media-preview-max-width'.  A graphical display uses a fixed-size,
+center-cropped SVG thumbnail like Telega's one-line previews.  Displays
+without SVG support retain the ordinary image decoder with explicit
+one-line height and maximum-width constraints.
+
+Display with `appkit-media-one-line-image-display-string'."
+  (let* ((safe-max-width
+          (max 1 (if (numberp max-width)
+                     max-width
+                   appkit-media-preview-max-width)))
+         (line-height (appkit-media--base-char-pixel-height)))
+    (or (appkit-media--one-line-thumbnail-from-file
+         file safe-max-width line-height)
+        (let ((image
+               (appkit-media-preview-image-from-file
+                file safe-max-width line-height)))
+          (when (appkit-media-image-object-valid-p image)
+            (plist-put (cdr image) :max-width safe-max-width)
+            image)))))
 
 (defun appkit-media--bytes-prefix-p (bytes offset prefix-bytes)
   "Return non-nil when BYTES at OFFSET starts with PREFIX-BYTES."

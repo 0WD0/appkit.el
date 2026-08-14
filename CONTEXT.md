@@ -16,6 +16,10 @@ _Avoid_: Tweet, note, thread item
 A client-supplied label, value, and action describing one current compose setting without assigning that setting a cross-protocol meaning.
 _Avoid_: Universal option, protocol field
 
+**One-line preview**:
+A bounded, protocol-neutral content projection used inside compact containers. It combines optional atomic visual content with text and a textual fallback, but excludes the surrounding row, card, action, and resource lifecycle.
+_Avoid_: Message row, thumbnail renderer, protocol summary
+
 **Media attachment view**:
 The shared presentation of one attached media item, including its preview, label, description, state, and available actions.
 _Avoid_: Media resource (which is a readable or displayable resource)

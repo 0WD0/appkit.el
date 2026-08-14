@@ -67,10 +67,7 @@
 (ert-deftest appkit-view-one-line-row-collapses-preview-newlines ()
   (with-temp-buffer
     (appkit-view-insert-one-line-row
-     (appkit-view-one-line-row-create
-      :context "Group\nName"
-      :preview "first line\nsecond line\r\nthird"
-      :time "12:34")
+     (appkit-view-one-line-row-create :context "Group\nName" :preview (appkit-ui-one-line-preview-create :text "first line\nsecond line\r\nthird") :time "12:34")
      :width 80
      :icon-slot-width 4
      :context-width-spec '(0.32 16 30))
@@ -79,13 +76,45 @@
     (should (string-match-p "first line second line third"
                             (buffer-string)))))
 
+(ert-deftest appkit-view-one-line-row-renders-rich-preview-in-preview-column ()
+  (let* ((image '(image :type png :data "bytes"))
+         (prefix (propertize "[image]" 'display image)))
+    (cl-letf (((symbol-function 'display-graphic-p) (lambda (&rest _) t))
+              ((symbol-function 'display-images-p) (lambda (&rest _) t)))
+      (with-temp-buffer
+        (appkit-view-insert-one-line-row
+         (appkit-view-one-line-row-create
+          :context "Group"
+          :preview
+          (appkit-ui-one-line-preview-create
+           :text "hello"
+           :label "Alice"
+           :separator ":"
+           :visual prefix
+           :visual-columns 2
+           :label-face 'success))
+         :width 60
+         :context-width-spec 20)
+        (should (= 1 (count-lines (point-min) (point-max))))
+        (let ((image-position
+               (text-property-any (point-min) (point-max) 'display image)))
+          (should image-position)
+          (should-not
+           (memq 'success
+                 (ensure-list
+                  (get-text-property image-position 'face)))))
+        (goto-char (point-min))
+        (search-forward "Alice:")
+        (should
+         (memq 'success
+               (ensure-list
+                (get-text-property (- (point) 6) 'face))))))))
+
 (ert-deftest appkit-view-one-line-row-places-normalized-context-trail-inside-brackets ()
   (with-temp-buffer
     (appkit-view-insert-one-line-row
-     (appkit-view-one-line-row-create
-      :context "Group"
-      :context-trail "  7\nnew  "
-      :preview "preview")
+     (appkit-view-one-line-row-create :context "Group"
+				      :context-trail "  7\nnew  " :preview (appkit-ui-one-line-preview-create :text "preview") )
      :width 60
      :context-width-spec 20)
     (goto-char (point-min))
@@ -96,15 +125,59 @@
       (should (< open context trail close)))
     (should (= 1 (count-lines (point-min) (point-max))))))
 
+(ert-deftest appkit-view-one-line-row-allows-zero-width-icon-slot ()
+  (with-temp-buffer
+    (appkit-view-insert-one-line-row
+     (appkit-view-one-line-row-create
+      :context "Channel"
+      :preview (appkit-ui-one-line-preview-create :text "preview"))
+     :width 60
+     :icon-slot-width 0)
+    (should (string-prefix-p "[Channel" (buffer-string)))))
+
+(ert-deftest appkit-view-one-line-row-supports-client-context-delimiters ()
+  (with-temp-buffer
+    (appkit-view-insert-one-line-row
+     (appkit-view-one-line-row-create
+      :context "Guild > Channel"
+      :context-open "<"
+      :context-close ">"
+      :context-trail "7"
+      :preview (appkit-ui-one-line-preview-create :text "preview"))
+     :width 60
+     :context-width-spec 20)
+    (goto-char (point-min))
+    (let ((open (search-forward "<"))
+          (context (search-forward "Guild > Channel"))
+          (trail (search-forward "7"))
+          (close (search-forward ">")))
+      (should (< open context trail close)))
+    (should-not (string-match-p "\\[" (buffer-string)))))
+
+(ert-deftest appkit-view-one-line-row-measures-wide-context-delimiters ()
+  (with-temp-buffer
+    (appkit-view-insert-one-line-row
+     (appkit-view-one-line-row-create
+      :context "Voice"
+      :context-open "「"
+      :context-close "」"
+      :context-trail "7"
+      :preview (appkit-ui-one-line-preview-create :text "preview")
+      :time "12:34")
+     :width 60
+     :context-width-spec 20)
+    (should (string-match-p "「Voice.*7」" (buffer-string)))
+    (goto-char (point-min))
+    (search-forward "12:34")
+    (should (= 60 (current-column)))))
+
 (ert-deftest appkit-view-one-line-row-applies-face-only-to-context-trail ()
   (with-temp-buffer
     (let ((trail (propertize "42" 'appkit-test-trail t)))
       (appkit-view-insert-one-line-row
-       (appkit-view-one-line-row-create
-        :context "Group"
-        :context-trail trail
-        :context-trail-face 'font-lock-warning-face
-        :preview "preview")
+       (appkit-view-one-line-row-create :context "Group"
+					:context-trail trail
+					:context-trail-face 'font-lock-warning-face :preview (appkit-ui-one-line-preview-create :text "preview") )
        :width 60
        :context-width-spec 20))
     (goto-char (point-min))
@@ -120,12 +193,10 @@
 (ert-deftest appkit-view-one-line-row-preserves-context-trail-text-properties ()
   (with-temp-buffer
     (appkit-view-insert-one-line-row
-     (appkit-view-one-line-row-create
-      :context "Group"
-      :context-trail
-      (concat (propertize "12\n" 'face 'success)
-              (propertize "@3" 'face 'warning))
-      :preview "preview")
+     (appkit-view-one-line-row-create :context "Group"
+				      :context-trail
+				      (concat (propertize "12\n" 'face 'success)
+					      (propertize "@3" 'face 'warning)) :preview (appkit-ui-one-line-preview-create :text "preview") )
      :width 60
      :context-width-spec 20)
     (goto-char (point-min))
@@ -140,10 +211,8 @@
   (with-temp-buffer
     (dolist (trail '(nil "7" "12345"))
       (appkit-view-insert-one-line-row
-       (appkit-view-one-line-row-create
-        :context "Group"
-        :context-trail trail
-        :preview "preview")
+       (appkit-view-one-line-row-create :context "Group"
+					:context-trail trail :preview (appkit-ui-one-line-preview-create :text "preview") )
        :width 60
        :context-width-spec 20))
     (let (closing-columns)
@@ -158,10 +227,8 @@
 (ert-deftest appkit-view-one-line-row-long-context-retains-right-aligned-trail ()
   (with-temp-buffer
     (appkit-view-insert-one-line-row
-     (appkit-view-one-line-row-create
-      :context (make-string 80 ?x)
-      :context-trail "NEW"
-      :preview "preview")
+     (appkit-view-one-line-row-create :context (make-string 80 ?x)
+				      :context-trail "NEW" :preview (appkit-ui-one-line-preview-create :text "preview") )
      :width 60
      :context-width-spec 16)
     (goto-char (point-min))
@@ -192,11 +259,8 @@
 (ert-deftest appkit-view-one-line-row-does-not-infer-hover-from-help ()
   (with-temp-buffer
     (appkit-view-insert-one-line-row
-     (appkit-view-one-line-row-create
-      :context "Group"
-      :preview "preview"
-      :time "12:34"
-      :help-echo "Open Group")
+     (appkit-view-one-line-row-create :context "Group" :preview (appkit-ui-one-line-preview-create :text "preview") :time "12:34"
+				      :help-echo "Open Group")
      :width 80)
     (should (equal "Open Group" (get-text-property (point-min) 'help-echo)))
     (should-not (text-property-not-all
@@ -205,11 +269,8 @@
 (ert-deftest appkit-view-one-line-row-supports-explicit-hover-face ()
   (with-temp-buffer
     (appkit-view-insert-one-line-row
-     (appkit-view-one-line-row-create
-      :context "Group"
-      :preview "preview"
-      :time "12:34"
-      :mouse-face 'highlight)
+     (appkit-view-one-line-row-create :context "Group" :preview (appkit-ui-one-line-preview-create :text "preview") :time "12:34"
+				      :mouse-face 'highlight)
      :width 80)
     (should (eq 'highlight (get-text-property (point-min) 'mouse-face)))))
 
@@ -217,10 +278,7 @@
   (with-temp-buffer
     (dolist (time '("" "Thu•" "29.06.26•"))
       (appkit-view-insert-one-line-row
-       (appkit-view-one-line-row-create
-        :context "channel"
-        :preview "preview"
-        :time time)
+       (appkit-view-one-line-row-create :context "channel" :preview (appkit-ui-one-line-preview-create :text "preview") :time time)
        :width 80
        :time-slot-width 9))
     (let (targets)
@@ -346,61 +404,61 @@
 (ert-deftest appkit-view-responsive-geometry-coalesces-display-changes ()
   (save-window-excursion
     (appkit-test-with-view
-      (let ((view (appkit-current-view))
-            (width 30)
-            requests)
-        (set-window-buffer (selected-window) (current-buffer))
-        (cl-letf (((symbol-function 'appkit-view-window-fill-column)
-                   (lambda (&rest _arguments) width))
-                  ((symbol-function 'appkit-request-sync)
-                   (lambda (&rest arguments)
-                     (push arguments requests))))
-          (appkit-view-enable-responsive-geometry view)
-          (should (= 28 (appkit-view-responsive-width 2)))
-          (should
-           (memq #'appkit-view--on-window-geometry-change
-                 window-size-change-functions))
-          (should
-           (memq #'appkit-view--on-window-geometry-change
-                 window-selection-change-functions))
-          (setq width 40)
-          (run-hook-with-args
-           'window-size-change-functions (selected-window))
-          (run-hook-with-args
-           'window-size-change-functions (selected-window))
-          (run-hooks 'text-scale-mode-hook))
-        (should
-         (equal (nreverse requests)
-                (list (list view :part 'geometry :position t)
-                      (list view :part 'geometry :position t))))))))
+     (let ((view (appkit-current-view))
+           (width 30)
+           requests)
+       (set-window-buffer (selected-window) (current-buffer))
+       (cl-letf (((symbol-function 'appkit-view-window-fill-column)
+                  (lambda (&rest _arguments) width))
+                 ((symbol-function 'appkit-request-sync)
+                  (lambda (&rest arguments)
+                    (push arguments requests))))
+         (appkit-view-enable-responsive-geometry view)
+         (should (= 28 (appkit-view-responsive-width 2)))
+         (should
+          (memq #'appkit-view--on-window-geometry-change
+                window-size-change-functions))
+         (should
+          (memq #'appkit-view--on-window-geometry-change
+                window-selection-change-functions))
+         (setq width 40)
+         (run-hook-with-args
+          'window-size-change-functions (selected-window))
+         (run-hook-with-args
+          'window-size-change-functions (selected-window))
+         (run-hooks 'text-scale-mode-hook))
+       (should
+        (equal (nreverse requests)
+               (list (list view :part 'geometry :position t)
+                     (list view :part 'geometry :position t))))))))
 
 (ert-deftest appkit-view-responsive-geometry-seeds-hidden-buffer-width ()
   (appkit-test-with-view
-    (let ((view (appkit-current-view))
-          (fill-column 72))
-      (cl-letf (((symbol-function 'appkit-view-display-window)
-                 (lambda () nil)))
-        (appkit-view-enable-responsive-geometry view)
-        (should (= 72 (appkit-view-responsive-width)))))))
+   (let ((view (appkit-current-view))
+         (fill-column 72))
+     (cl-letf (((symbol-function 'appkit-view-display-window)
+                (lambda () nil)))
+       (appkit-view-enable-responsive-geometry view)
+       (should (= 72 (appkit-view-responsive-width)))))))
 
 (ert-deftest appkit-view-responsive-geometry-ignores-detached-view ()
   (save-window-excursion
     (appkit-test-with-view
-      (let ((view (appkit-current-view))
-            (measurements 0))
-        (set-window-buffer (selected-window) (current-buffer))
-        (appkit-view-enable-responsive-geometry view)
-        (appkit-kill-view view)
-        (cl-letf (((symbol-function 'appkit-view-window-fill-column)
-                   (lambda (&rest _arguments)
-                     (cl-incf measurements)))
-                  ((symbol-function 'appkit-request-sync)
-                   (lambda (&rest _arguments)
-                     (ert-fail "Detached view requested geometry sync"))))
-          (run-hook-with-args
-           'window-size-change-functions (selected-window))
-          (run-hooks 'text-scale-mode-hook))
-        (should (= measurements 0))))))
+     (let ((view (appkit-current-view))
+           (measurements 0))
+       (set-window-buffer (selected-window) (current-buffer))
+       (appkit-view-enable-responsive-geometry view)
+       (appkit-kill-view view)
+       (cl-letf (((symbol-function 'appkit-view-window-fill-column)
+                  (lambda (&rest _arguments)
+                    (cl-incf measurements)))
+                 ((symbol-function 'appkit-request-sync)
+                  (lambda (&rest _arguments)
+                    (ert-fail "Detached view requested geometry sync"))))
+         (run-hook-with-args
+          'window-size-change-functions (selected-window))
+         (run-hooks 'text-scale-mode-hook))
+       (should (= measurements 0))))))
 
 (ert-deftest appkit-view-elide-string-adds-display-ellipsis ()
   (let* ((text "abcdefghijklmnopqrstuvwxyz")
@@ -417,15 +475,15 @@
 
 (ert-deftest appkit-view-elide-string-for-columns-uses-pixel-width ()
   (cl-labels ((pixel-width
-               (text)
-               (let ((total 0))
-                 (dolist (character (string-to-list text) total)
-                   (setq total
-                         (+ total
-                            (cond
-                             ((= character ?🏆) 30)
-                             ((= character ?…) 10)
-                             (t 10))))))))
+		(text)
+		(let ((total 0))
+                  (dolist (character (string-to-list text) total)
+                    (setq total
+                          (+ total
+                             (cond
+                              ((= character ?🏆) 30)
+                              ((= character ?…) 10)
+                              (t 10))))))))
     (cl-letf (((symbol-function 'appkit-view--string-pixel-width)
                (lambda (text &optional _face) (pixel-width text)))
               ((symbol-function 'appkit-view--chars-xwidth)

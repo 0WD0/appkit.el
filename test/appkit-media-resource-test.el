@@ -173,53 +173,53 @@
           (make-directory (file-name-directory target) t)
           (with-temp-file target (insert "old contents"))
           (cl-letf (((symbol-function 'plz)
-                   (lambda (&rest arguments)
-                     (setq plz-arguments arguments
-                           curl-arguments plz-curl-default-args)
-                     :remote-process))
-                  ((symbol-function 'url-copy-file)
-                   (lambda (&rest _)
-                     (ert-fail
-                      "generic remote files must use asynchronous plz"))))
-          (should
-           (appkit-media-transfer-p
-            (appkit-media-copy-or-download-resource-async
-             '((url . "https://example.invalid/report.pdf"))
-             target
-             (lambda (file) (setq success-value file))
-             (lambda (reason) (setq failure reason)))))
-          (should (eq 'get (nth 0 plz-arguments)))
-          (should (equal "https://example.invalid/report.pdf"
-                         (nth 1 plz-arguments)))
-          (should (equal "--disable" (car curl-arguments)))
-          (should
-           (equal
-            '("--proto" "=https" "--proto-redir" "=https"
-              "--max-redirs" "5")
-            (last curl-arguments 6)))
-          (let ((properties (nthcdr 2 plz-arguments)))
-            (let ((part (cadr (plist-get properties :as))))
-              (should (string-suffix-p "/download.part" part))
-              (should (file-directory-p (file-name-directory part)))
-              (should-not (file-exists-p part))
-              (should (equal "old contents"
+                     (lambda (&rest arguments)
+                       (setq plz-arguments arguments
+                             curl-arguments plz-curl-default-args)
+                       :remote-process))
+                    ((symbol-function 'url-copy-file)
+                     (lambda (&rest _)
+                       (ert-fail
+                        "generic remote files must use asynchronous plz"))))
+            (should
+             (appkit-media-transfer-p
+              (appkit-media-copy-or-download-resource-async
+               '((url . "https://example.invalid/report.pdf"))
+               target
+               (lambda (file) (setq success-value file))
+               (lambda (reason) (setq failure reason)))))
+            (should (eq 'get (nth 0 plz-arguments)))
+            (should (equal "https://example.invalid/report.pdf"
+                           (nth 1 plz-arguments)))
+            (should (equal "--disable" (car curl-arguments)))
+            (should
+             (equal
+              '("--proto" "=https" "--proto-redir" "=https"
+                "--max-redirs" "5")
+              (last curl-arguments 6)))
+            (let ((properties (nthcdr 2 plz-arguments)))
+              (let ((part (cadr (plist-get properties :as))))
+                (should (string-suffix-p "/download.part" part))
+                (should (file-directory-p (file-name-directory part)))
+                (should-not (file-exists-p part))
+                (should (equal "old contents"
+                               (with-temp-buffer
+                                 (insert-file-contents-literally target)
+                                 (buffer-string))))
+                (with-temp-file part (insert "new remote contents"))
+                (funcall (plist-get properties :then) part)
+                (should-not (file-exists-p part))
+                (should-not (file-directory-p (file-name-directory part))))
+              (should (eq t (plist-get properties :noquery)))
+              (should (functionp (plist-get properties :then)))
+              (should (functionp (plist-get properties :else)))
+              (should (equal "new remote contents"
                              (with-temp-buffer
                                (insert-file-contents-literally target)
-                               (buffer-string))))
-              (with-temp-file part (insert "new remote contents"))
-              (funcall (plist-get properties :then) part)
-              (should-not (file-exists-p part))
-              (should-not (file-directory-p (file-name-directory part))))
-            (should (eq t (plist-get properties :noquery)))
-            (should (functionp (plist-get properties :then)))
-            (should (functionp (plist-get properties :else)))
-            (should (equal "new remote contents"
-                           (with-temp-buffer
-                             (insert-file-contents-literally target)
-                             (buffer-string)))))
-          (should (equal target success-value))
-          (should-not failure)
-          (should (= 0 appkit-media--active-transfer-count))))
+                               (buffer-string)))))
+            (should (equal target success-value))
+            (should-not failure)
+            (should (= 0 appkit-media--active-transfer-count))))
       (delete-directory directory t))))
 
 (ert-deftest appkit-media-remote-transfer-deduplicates-and-broadcasts-success ()
