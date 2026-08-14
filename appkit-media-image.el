@@ -102,6 +102,14 @@ the returned image spec.  IMAGE remains suitable for immutable caches."
   (setq appkit-media--inline-animation-occurrences nil
         appkit-media--inline-animation-window-starts nil))
 
+(defun appkit-media-stop-buffer-inline-animations (&optional buffer)
+  "Stop and forget inline animation occurrences owned by BUFFER.
+
+BUFFER defaults to the current buffer.  This is safe when no animated images
+have been displayed."
+  (with-current-buffer (or buffer (current-buffer))
+    (appkit-media--teardown-inline-animation-occurrences)))
+
 (defun appkit-media-inline-image-rendering-available-p ()
   "Return non-nil when the current frame can render inline images."
   (and (display-images-p)
