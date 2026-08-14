@@ -507,25 +507,10 @@ return the source image height instead of a character height."
        (ceiling (/ (float (max 1 pixels))
                    (float (appkit-media--char-pixel-height))))))
 
-(defun appkit-media--em-height-ratio ()
-  "Return the em-height ratio for the default face in the selected frame."
-  (let* ((frame (selected-frame))
-         (font-name (face-font 'default frame))
-         (font-info (and font-name (font-info font-name frame)))
-         (font-height (and (vectorp font-info) (aref font-info 3)))
-         (font-size (and (vectorp font-info) (aref font-info 2))))
-    (if (and (numberp font-height)
-             (numberp font-size)
-             (> font-size 0))
-        (/ (float font-height) font-size)
-      1.0)))
 
 (defun appkit-media-ch-height-spec (characters)
-  "Return an image height spec for CHARACTERS text lines."
-  (let ((lines (max 1 characters)))
-    (if (version< emacs-version "30.1")
-        (cons (* lines (appkit-media--em-height-ratio)) 'em)
-      (cons lines 'ch))))
+  "Return the `(HEIGHT . ch)' spec for CHARACTERS text lines."
+  (cons (max 1 characters) 'ch))
 
 (defun appkit-media--image-file-size-pixels (file)
   "Return FILE image size in pixels as (WIDTH . HEIGHT), or nil."
@@ -659,6 +644,68 @@ Display still goes through `appkit-media-insert-image-slices' or
          (appkit-media--known-image-signature-at-p bytes 2))
     (substring bytes 2))
    (t bytes)))
+
+(defun appkit-media--buffer-uint32-be (position)
+  "Read one unsigned big-endian 32-bit value at buffer POSITION."
+  (+ (ash (char-after position) 24)
+     (ash (char-after (1+ position)) 16)
+     (ash (char-after (+ position 2)) 8)
+     (char-after (+ position 3))))
+
+(defun appkit-media--png-frame-end (start)
+  "Return end position of a complete PNG frame at START, or nil."
+  (let ((position (+ start 8))
+        end)
+    (when (and (<= (+ start 8) (point-max))
+               (cl-loop for byte in '(137 80 78 71 13 10 26 10)
+                        for offset from 0
+                        always (= (char-after (+ start offset)) byte)))
+      (catch 'done
+        (while (<= (+ position 12) (point-max))
+          (let* ((length (appkit-media--buffer-uint32-be position))
+                 (chunk-end (+ position 12 length)))
+            (when (> chunk-end (point-max))
+              (throw 'done nil))
+            (when (and (= (char-after (+ position 4)) ?I)
+                       (= (char-after (+ position 5)) ?E)
+                       (= (char-after (+ position 6)) ?N)
+                       (= (char-after (+ position 7)) ?D))
+              (setq end chunk-end)
+              (throw 'done end))
+            (setq position chunk-end))))
+      end)))
+
+(defun appkit-media-png-stream-pop-latest (&optional buffer)
+  "Remove complete PNG frames from BUFFER and return only the latest.
+
+BUFFER defaults to the current buffer and must be unibyte.  Any incomplete
+trailing frame remains buffered for the next process-filter chunk.  Signal an
+error when complete input does not begin with a PNG signature."
+  (with-current-buffer (or buffer (current-buffer))
+    (when enable-multibyte-characters
+      (error "Appkit PNG stream buffer must be unibyte"))
+    (let ((position (point-min))
+          latest-start
+          latest-end
+          frame-end)
+      (while (setq frame-end (appkit-media--png-frame-end position))
+        (setq latest-start position
+              latest-end frame-end
+              position frame-end))
+      (when (and (< position (point-max))
+                 (>= (- (point-max) position) 8)
+                 (not (appkit-media--png-frame-end position)))
+        (unless
+            (cl-loop for byte in '(137 80 78 71 13 10 26 10)
+                     for offset from 0
+                     always (= (char-after (+ position offset)) byte))
+          (error "Appkit PNG stream contains invalid bytes")))
+      (when latest-start
+        (let ((latest
+               (buffer-substring-no-properties latest-start latest-end)))
+          (delete-region (point-min) position)
+          latest)))))
+
 
 (defun appkit-media-bytes-to-extension (bytes fallback-extension)
   "Infer an image extension from BYTES, else return FALLBACK-EXTENSION."
