@@ -66,6 +66,12 @@ Set ~appkit-chatbuf-input-sync-function~ to synchronize
 protocol-specific draft state.  Do not install a second after-change
 controller.
 
+Store reply/edit ownership in ~appkit-chatbuf-aux-set~, then render its
+client-owned title and preview with ~appkit-chatbuf-aux-render~.  The
+shared renderer supplies the bounded two-line card, accent, and cancel
+action; clients retain protocol objects, labels, identity faces, and
+preview extraction.
+
 ** Discussion
 
 Discussion rows accept optional pre-heading context, nesting depth,

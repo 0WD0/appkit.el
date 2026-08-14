@@ -471,6 +471,39 @@
     (appkit-chatbuf-aux-reset)
     (should-not (appkit-chatbuf-aux-active-p))))
 
+(ert-deftest appkit-chatbuf-aux-render-builds-unified-action-card ()
+  (let (cancelled)
+    (with-temp-buffer
+      (insert
+       (appkit-chatbuf-aux-render
+        :title "Reply to Alice"
+        :preview "  (sticker)\n preview  "
+        :cancel-action (lambda () (setq cancelled t))
+        :cancel-help "Cancel reply"
+        :width 40))
+      (should
+       (equal "× ▏ Reply to Alice\n  ▏ (sticker) preview\n"
+              (buffer-substring-no-properties (point-min) (point-max))))
+      (goto-char (point-min))
+      (should (get-text-property (point) 'appkit-chatbuf-aux-ui))
+      (should (eq (get-text-property (point) 'face)
+                  'appkit-chatbuf-aux-close))
+      (should (eq (get-text-property (+ (point) 2) 'face)
+                  'appkit-chatbuf-aux-accent))
+      (should (appkit-ui-activate-at))
+      (should cancelled))))
+
+(ert-deftest appkit-chatbuf-aux-render-bounds-both-lines ()
+  (let* ((card
+          (appkit-chatbuf-aux-render
+           :title "Reply to a very long display name"
+           :preview "a long preview that cannot escape the card"
+           :width 16))
+         (lines (split-string (substring-no-properties card) "\n" t)))
+    (should (= 2 (length lines)))
+    (dolist (line lines)
+      (should (<= (string-width line) 16)))))
+
 (ert-deftest appkit-chatbuf-composer-idle-rejects-semantic-content ()
   (with-temp-buffer
     (appkit-chatbuf-init-state)
