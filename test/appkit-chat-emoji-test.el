@@ -46,6 +46,22 @@
                       (appkit-chat-completion-candidate-search-terms
                        candidate))))))
 
+(ert-deftest appkit-chat-emoji-candidates-preserve-category-order ()
+  (let ((source (make-hash-table :test #'equal))
+        (categories (make-hash-table :test #'equal))
+        (order '("Unicode · Smileys" "Unicode · Travel & Places")))
+    (puthash "airplane rocket" "🚀" source)
+    (puthash "zany smile" "😀" source)
+    (puthash "🚀" "Unicode · Travel & Places" categories)
+    (puthash "😀" "Unicode · Smileys" categories)
+    (let ((candidates
+           (appkit-chat-emoji--build-candidates source categories order)))
+      (should
+       (equal order
+              (mapcar
+               #'appkit-chat-completion-candidate-group
+               candidates))))))
+
 (ert-deftest appkit-chat-emoji-cache-builds-once-until-reset ()
   (let ((appkit-chat-emoji--candidates nil)
         (appkit-chat-emoji--initialized-p nil)

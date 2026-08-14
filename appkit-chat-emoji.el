@@ -19,6 +19,37 @@
 
 (declare-function emoji--init "emoji" (&optional force inhibit-adjust))
 (defvar emoji--all-bases)
+(defvar emoji--labels)
+
+(defun appkit-chat-emoji--collect-category (node category table)
+  "Record emoji glyphs below NODE as CATEGORY in TABLE."
+  (dolist (item (cdr node))
+    (cond
+     ((consp item)
+      (appkit-chat-emoji--collect-category item category table))
+     ((stringp item)
+      (puthash item category table)))))
+
+(defun appkit-chat-emoji--emacs-category-map ()
+  "Return an emoji glyph to built-in top-level category hash."
+  (let ((table (make-hash-table :test #'equal)))
+    (when (boundp 'emoji--labels)
+      (dolist (group emoji--labels)
+        (when (and (consp group) (stringp (car group)))
+          (appkit-chat-emoji--collect-category
+           group (format "Unicode · %s" (car group)) table))))
+    table))
+
+(defun appkit-chat-emoji--emacs-category-order ()
+  "Return built-in top-level emoji categories in database order."
+  (when (boundp 'emoji--labels)
+    (delq nil
+          (mapcar
+           (lambda (group)
+             (and (consp group)
+                  (stringp (car group))
+                  (format "Unicode · %s" (car group))))
+           emoji--labels))))
 
 (defun appkit-chat-emoji--emacs-source ()
   "Return Emacs's Unicode emoji name table when available."
@@ -58,11 +89,16 @@ The default adapter uses Emacs's built-in emoji database when available."
     (unless (string-empty-p trimmed)
       (format ":%s:" trimmed))))
 
-(defun appkit-chat-emoji--build-candidates (source)
-  "Build shared completion candidates from emoji name hash SOURCE."
+(defun appkit-chat-emoji--build-candidates
+    (source &optional category-map category-order)
+  "Build candidates from SOURCE, CATEGORY-MAP, and CATEGORY-ORDER."
   (let ((seen (make-hash-table :test #'equal))
+        (category-ranks (make-hash-table :test #'equal))
         records
         candidates)
+    (cl-loop for category in category-order
+             for rank from 0
+             do (puthash category rank category-ranks))
     (maphash
      (lambda (name glyph)
        (when (and (stringp name)
@@ -102,15 +138,28 @@ The default adapter uses Emacs's built-in emoji database when available."
           :prefix (concat glyph " ")
           :annotation (format "  %s" name)
           :search-terms (list name glyph (substring base 1 -1))
+          :group (or (and category-map (gethash glyph category-map))
+                     "Unicode")
           :value (list :kind 'unicode-emoji
                        :name name
                        :emoji glyph))
          candidates)))
-    (sort candidates
-          (lambda (left right)
-            (string-lessp
-             (appkit-chat-completion-candidate-label left)
-             (appkit-chat-completion-candidate-label right))))))
+    (sort
+     candidates
+     (lambda (left right)
+       (let* ((left-rank
+               (gethash
+                (appkit-chat-completion-candidate-group left)
+                category-ranks most-positive-fixnum))
+              (right-rank
+               (gethash
+                (appkit-chat-completion-candidate-group right)
+                category-ranks most-positive-fixnum)))
+         (if (= left-rank right-rank)
+             (string-lessp
+              (appkit-chat-completion-candidate-label left)
+              (appkit-chat-completion-candidate-label right))
+           (< left-rank right-rank)))))))
 
 (defun appkit-chat-emoji-candidates (&optional force)
   "Return shared Unicode emoji candidates.
@@ -125,12 +174,20 @@ Return nil on Emacs versions without the built-in emoji library."
       (if (not (functionp source-function))
           (setq appkit-chat-emoji--initialized-p t)
         (condition-case error-data
-            (let ((source (funcall source-function)))
+            (let* ((source (funcall source-function))
+                   (category-map
+                    (and (eq source-function
+                             #'appkit-chat-emoji--emacs-source)
+                         (appkit-chat-emoji--emacs-category-map)))
+                   (category-order
+                    (and category-map
+                         (appkit-chat-emoji--emacs-category-order))))
               (unless (or (null source) (hash-table-p source))
                 (error "Emoji source must return a hash table or nil"))
               (setq appkit-chat-emoji--candidates
                     (and source
-                         (appkit-chat-emoji--build-candidates source)))
+                         (appkit-chat-emoji--build-candidates
+                          source category-map category-order)))
               (setq appkit-chat-emoji--initialized-p t))
           (error
            (message "Appkit: failed to initialize emoji completion: %s"

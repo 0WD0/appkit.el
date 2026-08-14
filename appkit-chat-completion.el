@@ -32,13 +32,14 @@
 
 LABEL is the visible completion string and must be unique within one table;
 clients should append a stable identity when display names collide.  INSERT is
-the default replacement.
-PREFIX and ANNOTATION are strings or functions of CANDIDATE, shown before or
-after LABEL by capable completion UIs.  Functions keep expensive image
-annotations lazy until the completion UI actually requests a visible row.
+the default replacement.  PREFIX and ANNOTATION are strings or functions of
+CANDIDATE, shown before or after LABEL by capable completion UIs.  Functions
+keep expensive image annotations lazy until the completion UI requests a row.
+GROUP is a string or function of CANDIDATE naming its completion section.
 SEARCH-TERMS contains alternate strings matched by the shared table.  VALUE
 carries the opaque application object used by an insertion callback."
-  label insert prefix annotation search-terms value)
+  label insert prefix annotation search-terms value group)
+
 
 (defvar-local appkit-chat-completion-functions nil
   "Ordered functions tried by `appkit-chat-completion-complete'.
@@ -198,7 +199,9 @@ the table metadata and exact label lookup."
      `(metadata
        (category . ,category)
        (display-sort-function . identity)
-       (cycle-sort-function . identity)))
+       (cycle-sort-function . identity)
+       (group-function
+        . ,(appkit-chat-completion--group-function candidate-map))))
     ('t
      (let ((labels
             (mapcar
@@ -269,6 +272,22 @@ the table metadata and exact label lookup."
      ((functionp value) (or (funcall value candidate) ""))
      ((stringp value) value)
      (t ""))))
+
+(defun appkit-chat-completion--candidate-group (candidate)
+  "Return CANDIDATE's completion group, or nil."
+  (let ((group (appkit-chat-completion-candidate-group candidate)))
+    (cond
+     ((functionp group) (funcall group candidate))
+     ((stringp group) group))))
+
+(defun appkit-chat-completion--group-function (candidate-map)
+  "Return a completion grouping function backed by CANDIDATE-MAP."
+  (lambda (label transform)
+    (if transform
+        label
+      (when-let* ((candidate
+                   (gethash (substring-no-properties label) candidate-map)))
+        (appkit-chat-completion--candidate-group candidate)))))
 
 (defun appkit-chat-completion-affixation (labels candidate-map)
   "Return completion affixation rows for LABELS using CANDIDATE-MAP."
@@ -379,6 +398,113 @@ SYNC-FUNCTION are forwarded to `appkit-chat-completion-apply-candidate'."
               :sync-function sync-function))))
        :exclusive 'no))))
 
+(defun appkit-chat-completion--visual-title (candidate)
+  "Return CANDIDATE as one searchable visual-reader completion title.
+
+The visible prefix is supplied through native completion affixation so
+frontends may strip candidate properties without discarding it."
+  (let* ((label (appkit-chat-completion--candidate-label candidate))
+         (search-terms
+          (delete-dups
+           (seq-filter
+            (lambda (term)
+              (and (not (string-empty-p term))
+                   (not (string-equal term label))))
+            (mapcar
+             #'substring-no-properties
+             (cdr
+              (appkit-chat-completion--candidate-search-values candidate)))))))
+    (concat
+     label
+     (when search-terms
+       (propertize
+        (concat "\t" (string-join search-terms "\t"))
+        'display "")))))
+
+(defun appkit-chat-completion--visual-affixation (titles candidate-map)
+  "Return visual affixation rows for TITLES using CANDIDATE-MAP."
+  (mapcar
+   (lambda (title)
+     (let ((candidate
+            (gethash (substring-no-properties title) candidate-map)))
+       (list
+        title
+        (if candidate
+            (appkit-chat-completion--candidate-decoration
+             candidate #'appkit-chat-completion-candidate-prefix)
+          "")
+        "")))
+   titles))
+
+(defun appkit-chat-completion--visual-choices (candidates)
+  "Return validated (TITLE . CANDIDATE) entries for CANDIDATES."
+  (let ((labels (make-hash-table :test #'equal))
+        (titles (make-hash-table :test #'equal))
+        choices)
+    (dolist (candidate candidates)
+      (let* ((label (appkit-chat-completion--candidate-label candidate))
+             (title (appkit-chat-completion--visual-title candidate)))
+        (when (gethash label labels)
+          (error "Duplicate appkit chat completion label: %s" label))
+        (when (gethash title titles)
+          (error "Duplicate appkit chat visual title: %s" label))
+        (puthash label t labels)
+        (puthash title t titles)
+        (push (cons title candidate) choices)))
+    (nreverse choices)))
+
+(cl-defun appkit-chat-completion-read-visual
+    (prompt candidates
+            &key category history initial-input default-candidate)
+  "Read one item from a bounded visual CANDIDATES catalog.
+
+Each completion title contains its visible label and hidden search terms.
+Native affixation supplies candidate prefixes independently of candidate text
+properties and maps the selected title back to its opaque candidate object.
+CATEGORY, HISTORY, and INITIAL-INPUT customize `completing-read'.
+DEFAULT-CANDIDATE, when non-nil, must be one of CANDIDATES and becomes the
+native minibuffer default."
+  (unless candidates
+    (user-error "No completion candidates"))
+  (let* ((choices (appkit-chat-completion--visual-choices candidates))
+         (candidate-map (make-hash-table :test #'equal))
+         (default-entry
+          (and default-candidate (rassq default-candidate choices))))
+    (dolist (entry choices)
+      (puthash (car entry) (cdr entry) candidate-map))
+    (when (and default-candidate (not default-entry))
+      (error "Visual completion default is not one of its candidates"))
+    (let* ((category (or category 'appkit-chat))
+           (table
+            (completion-table-with-metadata
+             choices
+             `((category . ,category)
+               (display-sort-function . identity)
+               (cycle-sort-function . identity)
+               (group-function
+                . ,(appkit-chat-completion--group-function candidate-map))
+               (affixation-function
+                . ,(lambda (titles)
+                     (appkit-chat-completion--visual-affixation
+                      titles candidate-map))))))
+           (completion-category-overrides
+            (cons
+             `(appkit-chat
+               (styles ,@appkit-chat-completion-styles))
+             (assq-delete-all
+              'appkit-chat
+              (copy-tree completion-category-overrides))))
+           (completion-ignore-case appkit-chat-completion-ignore-case)
+           (choice
+            (completing-read
+             prompt table nil t initial-input history
+             (car default-entry)))
+           (entry (assoc choice choices)))
+      (if entry
+          (cdr entry)
+        (user-error
+         "Unknown visual completion candidate: %s" choice)))))
+
 (cl-defun appkit-chat-completion-read
     (prompt candidates &key category history initial-input)
   "Read and return one item from CANDIDATES using shared rich metadata.
@@ -396,6 +522,8 @@ merely its label.  CATEGORY, HISTORY, and INITIAL-INPUT customize
                   (category . ,(or category 'appkit-chat))
                   (display-sort-function . identity)
                   (cycle-sort-function . identity)
+                  (group-function
+                   . ,(appkit-chat-completion--group-function candidate-map))
                   (annotation-function
                    . ,(lambda (label)
                         (when-let* ((candidate
