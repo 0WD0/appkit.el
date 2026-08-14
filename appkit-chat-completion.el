@@ -372,7 +372,7 @@ SYNC-FUNCTION are forwarded to `appkit-chat-completion-apply-candidate'."
                                  (substring-no-properties label)))
                        (candidate (gethash key candidate-map)))
              (appkit-chat-completion-apply-candidate
-             key candidate
+              key candidate
               :start start-marker
               :insert-function insert-function
               :suffix suffix
