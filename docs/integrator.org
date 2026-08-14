@@ -95,8 +95,23 @@ member and server-emoji lookup, avatar acquisition, protocol objects,
 and insertion callbacks.  A selected mention remains a client-defined
 structured composer object.
 
+Bounded image catalogs use ~appkit-chat-completion-read-visual~.  It
+keeps the label and hidden search aliases in the native alist completion
+title, supplies each preview through the native ~affixation-function~,
+and maps the selected title back to the opaque candidate.  Prefixes may
+be strings or functions of the candidate; function prefixes let clients
+consult their own image cache only when the completion UI requests an
+affix.  Clients remain responsible for resource acquisition and cache
+invalidation.  Frontends may strip candidate text properties without
+discarding the independently affixed preview.
+Keep dynamic or large nonvisual catalogs on
+~appkit-chat-completion-read~.  Candidate ~group~ metadata becomes the
+native completion ~group-function~, so capable frontends render sections
+without a Consult dependency.
+
 On Emacs versions that provide the built-in emoji database,
-~appkit-chat-emoji-*~ adds shared ~:unicode_name:~ candidates.
+~appkit-chat-emoji-*~ adds shared ~:unicode_name:~ candidates grouped by
+the database's top-level Unicode categories.
 
 * Update model
 

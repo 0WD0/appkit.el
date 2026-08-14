@@ -194,6 +194,116 @@
       (should (appkit-chat-completion-complete))
       (should (equal '(second first) calls)))))
 
+(ert-deftest appkit-chat-completion-capf-exposes-candidate-groups ()
+  (let* ((candidate
+          (appkit-chat-completion-candidate-create
+           :label ":wave:"
+           :group "Favorites"))
+         (table (nth 2 (appkit-chat-completion-capf 1 1 (list candidate))))
+         (group-function
+          (completion-metadata-get
+           (completion-metadata "" table nil)
+           'group-function)))
+    (should (equal "Favorites" (funcall group-function ":wave:" nil)))
+    (should (equal ":wave:" (funcall group-function ":wave:" t)))))
+
+(ert-deftest appkit-chat-completion-group-preserves-existing-slot-layout ()
+  (let ((candidate
+         (appkit-chat-completion-candidate-create
+          :label ":rocket:"
+          :search-terms '("rocket")
+          :value 'payload
+          :group "Unicode · Travel & Places")))
+    ;; Existing byte-compiled clients inline these vector offsets.
+    (should (equal '("rocket") (aref candidate 5)))
+    (should (eq 'payload (aref candidate 6)))
+    (should (equal "Unicode · Travel & Places" (aref candidate 7)))))
+
+(ert-deftest appkit-chat-completion-visual-reader-uses-native-alist-table ()
+  (let* ((preview '(image :type png :file "face.png"))
+         (candidate
+          (appkit-chat-completion-candidate-create
+           :label "/惊讶 (0)"
+           :prefix (concat (propertize " " 'display preview) " ")
+           :search-terms '("surprised" "zero")
+           :group (lambda (_candidate) "QQ Faces")
+           :value 'face-zero))
+         seen-title
+         seen-default
+         seen-group
+         seen-prefix)
+    (cl-letf (((symbol-function 'completing-read)
+               (lambda (_prompt table _predicate _require _initial _history
+                        default)
+                 (setq seen-default default)
+                 (let* ((metadata (completion-metadata "" table nil))
+                        (group-function
+                         (completion-metadata-get metadata 'group-function))
+                        (affixation-function
+                         (completion-metadata-get metadata
+                                                  'affixation-function))
+                        (group-title
+                         (car (completion-all-completions "" table nil 0))))
+                   (should
+                    (eq (completion-metadata-get metadata 'category)
+                        'appkit-chat))
+                   (setq seen-group
+                         (funcall group-function group-title nil))
+                   (should
+                    (equal group-title
+                           (funcall group-function group-title t)))
+                   (let* ((matches
+                           (completion-all-completions
+                            "SURPRISED" table nil 9))
+                          (title (car matches))
+                          (row
+                           (car
+                            (funcall
+                             affixation-function
+                             (list (substring-no-properties title))))))
+                     (should (equal (cdr matches) 0))
+                     (should
+                      (equal
+                       (get-text-property (1- (length title)) 'display title)
+                       ""))
+                     (setq seen-prefix (cadr row)
+                           seen-title title)
+                     (substring-no-properties title))))))
+      (should
+       (eq (appkit-chat-completion-read-visual
+            "Visual: " (list candidate) :default-candidate candidate)
+           candidate))
+      (should (string-match-p "surprised" seen-title))
+      (should (equal (get-text-property 0 'display seen-prefix) preview))
+      (should (equal seen-group "QQ Faces"))
+      (should
+       (equal (substring-no-properties seen-default)
+              (substring-no-properties seen-title))))))
+
+(ert-deftest appkit-chat-completion-visual-affixation-evaluates-prefix-function ()
+  (let* ((calls 0)
+         (preview '(image :type png :file "face.png"))
+         (candidate
+          (appkit-chat-completion-candidate-create
+           :label ":dance:"
+           :search-terms '("party")
+           :prefix
+           (lambda (_candidate)
+             (cl-incf calls)
+             (concat (propertize " " 'display preview) " "))))
+         (title
+          (caar
+           (appkit-chat-completion--visual-choices (list candidate))))
+         (candidate-map (make-hash-table :test #'equal)))
+    (puthash title candidate candidate-map)
+    (let* ((row
+            (car
+             (appkit-chat-completion--visual-affixation
+              (list (substring-no-properties title)) candidate-map)))
+           (prefix (cadr row)))
+      (should (= 1 calls))
+      (should (equal preview (get-text-property 0 'display prefix))))))
+
 (provide 'appkit-chat-completion-test)
 
 ;;; appkit-chat-completion-test.el ends here
