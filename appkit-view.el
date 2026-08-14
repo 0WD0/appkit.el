@@ -133,11 +133,11 @@ HELP-ECHO, and MOUSE-FACE customize its presentation and interaction."
                (:constructor appkit-view-one-line-row-create))
   icon-inserter
   context
+  context-open
+  context-close
   context-trail
   context-trail-face
   preview
-  preview-leading-length
-  preview-leading-face
   time
   time-face
   time-tail-face
@@ -524,45 +524,60 @@ presentation update."
               #'appkit-view--on-display-geometry-change nil t))
   view)
 
-(defun appkit-view-one-line-column-widths (content-width context-width-spec)
-  "Split CONTENT-WIDTH using CONTEXT-WIDTH-SPEC for the context column."
-  (let* ((max-context-inner (max 8 (- content-width 3)))
+(defun appkit-view-one-line-column-widths
+    (content-width context-width-spec &optional delimiter-width)
+  "Split CONTENT-WIDTH using CONTEXT-WIDTH-SPEC for the context column.
+
+DELIMITER-WIDTH is the combined display width of the opening and closing
+context delimiters, defaulting to two columns."
+  (let* ((delimiter-width (max 0 (or delimiter-width 2)))
+         (fixed-width (1+ delimiter-width))
+         (max-context-inner (max 8 (- content-width fixed-width)))
          (context-inner-width
           (max 8
                (min max-context-inner
                     (appkit-view-canonicalize-number context-width-spec
-                                                   content-width))))
-         (preview-width (max 0 (- content-width context-inner-width 3))))
+                                                     content-width))))
+         (preview-width
+          (max 0 (- content-width context-inner-width fixed-width))))
     (list :context-inner-width context-inner-width
           :preview-width preview-width
           :separator-width (if (> preview-width 0) 1 0))))
 
-(defun appkit-view--one-line-text (text)
-  "Return TEXT with physical line-breaking whitespace collapsed."
-  (string-trim
-   (replace-regexp-in-string "[\t\n\r ]+" " " (or text "") nil t)))
 
 (cl-defun appkit-view-insert-one-line-row
     (row &key indent width icon-slot-width context-width-spec time-slot-width)
   "Insert ROW using one-line activity-style layout.
 
-ROW is a `appkit-view-one-line-row' object.  INDENT is left padding in spaces.
+ROW is an `appkit-view-one-line-row' object.  INDENT is left padding in spaces.
 WIDTH sets the total row width.  ICON-SLOT-WIDTH reserves columns for the
-icon slot.  CONTEXT-WIDTH-SPEC controls context width using
+icon slot; zero suppresses the slot entirely.  CONTEXT-WIDTH-SPEC controls
+context width using
 `appkit-view-canonicalize-number' semantics.  TIME-SLOT-WIDTH reserves a stable
-right-aligned timestamp column.  A non-empty context trail is kept inside the
-context brackets and aligned to their right edge; its width is reserved before
-the context is elided."
+right-aligned timestamp column.  PREVIEW is an
+`appkit-ui-one-line-preview'.  CONTEXT-OPEN and CONTEXT-CLOSE default to
+square brackets; Appkit measures their actual display widths.  A non-empty
+context trail is kept inside those delimiters and aligned to their right edge;
+its width is reserved before the context is elided."
   (let* ((padding (make-string (max 0 (or indent 0)) ?\s))
          (context-text
-          (appkit-view--one-line-text (appkit-view-one-line-row-context row)))
+          (appkit-ui-one-line-text (appkit-view-one-line-row-context row)))
          (context-trail-text
-          (appkit-view--one-line-text
+          (appkit-ui-one-line-text
            (appkit-view-one-line-row-context-trail row)))
-         (preview-text
-          (appkit-view--one-line-text (appkit-view-one-line-row-preview row)))
+         (context-open
+          (appkit-ui-one-line-text
+           (or (appkit-view-one-line-row-context-open row) "[")))
+         (context-close
+          (appkit-ui-one-line-text
+           (or (appkit-view-one-line-row-context-close row) "]")))
+         (preview (appkit-view-one-line-row-preview row))
          (time-text
-          (appkit-view--one-line-text (appkit-view-one-line-row-time row)))
+          (appkit-ui-one-line-text (appkit-view-one-line-row-time row)))
+         (context-open-width (string-width context-open))
+         (context-close-width (string-width context-close))
+         (context-delimiter-width
+          (+ context-open-width context-close-width))
          (time-width
           (max (max 0 (or time-slot-width 0))
                (if (string-empty-p time-text)
@@ -571,13 +586,16 @@ the context is elided."
          (line-start (point)))
     (insert padding)
     (let* ((icon-start (appkit-view-current-column))
-           (slot-width (max 2 (or icon-slot-width 2)))
-           (slot-target (max icon-start
-                             (1- (+ icon-start slot-width)))))
-      (when-let* ((icon-inserter (appkit-view-one-line-row-icon-inserter row)))
-        (funcall icon-inserter))
-      (appkit-view-move-to-column slot-target)
-      (insert " "))
+           (slot-width (max 0 (if (null icon-slot-width)
+                                  2
+                                icon-slot-width))))
+      (when (> slot-width 0)
+        (when-let* ((icon-inserter
+                     (appkit-view-one-line-row-icon-inserter row)))
+          (funcall icon-inserter))
+        (appkit-view-move-to-column
+         (max icon-start (1- (+ icon-start slot-width))))
+        (insert " ")))
     (let* ((content-start (appkit-view-current-column))
            (time-gap (if (> time-width 0) 1 0))
            (content-width (max 20 (- (max 20 (or width 20))
@@ -586,18 +604,19 @@ the context is elided."
                                      time-gap)))
            (widths (appkit-view-one-line-column-widths
                     content-width
-                    (or context-width-spec '(0.45 20))))
+                    (or context-width-spec '(0.45 20))
+                    context-delimiter-width))
            (context-inner-width (or (plist-get widths :context-inner-width) 8))
            (preview-width (or (plist-get widths :preview-width) 0))
            (separator-width (or (plist-get widths :separator-width) 0)))
       (let ((context-start (appkit-view-current-column)))
-        (insert "[")
+        (insert context-open)
         (if (string-empty-p context-trail-text)
             (progn
               (insert (appkit-view-elide-string-for-columns
                        context-text context-inner-width 'default))
               (appkit-view-move-to-column
-               (+ context-start 1 context-inner-width)))
+               (+ context-start context-open-width context-inner-width)))
           (let* ((raw-trail-width (string-width context-trail-text))
                  (trail-width (min context-inner-width raw-trail-width))
                  (trail-start-offset
@@ -619,29 +638,22 @@ the context is elided."
               (insert (appkit-view-elide-string-for-columns
                        context-text context-width 'default)))
             (appkit-view-move-to-column
-             (+ context-start 1 trail-start-offset))
+             (+ context-start context-open-width trail-start-offset))
             (let ((trail-start (point)))
               (insert trail-text)
               (when-let* ((trail-face
                            (appkit-view-one-line-row-context-trail-face row)))
                 (add-text-properties trail-start (point)
                                      (list 'face trail-face))))))
-        (insert "]"))
+        (insert context-close))
       (when (> preview-width 0)
         (when (> separator-width 0)
           (insert " "))
-        (let ((preview-start (point)))
-          (insert (appkit-view-elide-string-for-columns
-                   preview-text preview-width 'shadow))
-          (add-text-properties preview-start (point) (list 'face 'shadow))
-          (let ((leading-length (appkit-view-one-line-row-preview-leading-length row))
-                (leading-face (appkit-view-one-line-row-preview-leading-face row)))
-            (when (and (integerp leading-length)
-                       (> leading-length 0)
-                       leading-face)
-              (add-text-properties preview-start
-                                   (min (point) (+ preview-start leading-length))
-                                   (list 'face leading-face))))))
+        (insert
+         (appkit-ui-render-one-line-preview
+          preview preview-width
+          :face 'shadow
+          :elide-function #'appkit-view-elide-string-for-columns)))
       (when (> time-width 0)
         (let ((target-time-col (- (max 20 (or width 20)) time-width)))
           (appkit-view-move-to-column target-time-col)
@@ -655,15 +667,15 @@ the context is elided."
                     (add-text-properties time-start tail-start (list 'face time-face)))
                   (add-text-properties tail-start (point) (list 'face tail-face)))
               (add-text-properties time-start (point) (list 'face time-face))))))
-    (insert "\n")
-    (add-text-properties
-     line-start
-     (point)
-     (append (or (appkit-view-one-line-row-line-properties row) '())
-             (when-let* ((help-echo (appkit-view-one-line-row-help-echo row)))
-               (list 'help-echo help-echo))
-             (when-let* ((mouse-face (appkit-view-one-line-row-mouse-face row)))
-               (list 'mouse-face mouse-face)))))))
+      (insert "\n")
+      (add-text-properties
+       line-start
+       (point)
+       (append (or (appkit-view-one-line-row-line-properties row) '())
+               (when-let* ((help-echo (appkit-view-one-line-row-help-echo row)))
+		 (list 'help-echo help-echo))
+               (when-let* ((mouse-face (appkit-view-one-line-row-mouse-face row)))
+		 (list 'mouse-face mouse-face)))))))
 
 (provide 'appkit-view)
 

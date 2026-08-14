@@ -10,6 +10,7 @@
 
 (require 'button)
 (require 'cl-lib)
+(require 'subr-x)
 (require 'svg nil t)
 
 (defun appkit-ui-progress-bar (progress &optional width filled empty)
@@ -166,7 +167,7 @@ Do nothing when ACTION is not callable or the region is empty."
     action))
 
 (cl-defun appkit-ui-insert-action-button (label action
-                                               &key face help-echo properties)
+                                                &key face help-echo properties)
   "Insert clickable button LABEL calling ACTION.
 
 ACTION is a no-arg function.  FACE, HELP-ECHO and PROPERTIES customize button
@@ -410,15 +411,174 @@ per inserted line so copied text stays clean."
   (when (and face (< start end))
     (add-face-text-property start end face 'append)))
 
+;;; ── Bounded one-line previews ──────────────────────────────────────
+
+(cl-defstruct
+    (appkit-ui-one-line-preview
+     (:constructor appkit-ui-one-line-preview-create))
+  "Protocol-neutral content projected into one bounded physical line.
+
+TEXT is ordinary user-visible body content.  LABEL is an optional semantic
+leading label styled by LABEL-FACE; SEPARATOR is unstyled client-owned chrome
+between LABEL and content.  VISUAL is an optional atomic, propertized display
+string whose underlying text is its terminal fallback.  VISUAL-COLUMNS is the
+graphical display width reserved for VISUAL."
+  text
+  label
+  separator
+  visual
+  visual-columns
+  label-face)
+
+(defun appkit-ui-one-line-text (text)
+  "Return TEXT with physical line-breaking whitespace collapsed.
+
+  Text properties on retained characters are preserved."
+  (string-trim
+   (replace-regexp-in-string "[\t\n\r ]+" " " (or text "") nil t)))
+
+(defun appkit-ui--one-line-preview-default-elide (text width _face)
+  "Return TEXT right-elided to WIDTH columns."
+  (let ((limit (max 0 (or width 0))))
+    (if (= limit 0)
+        ""
+      (truncate-string-to-width text limit nil nil "…"))))
+
+(defun appkit-ui--one-line-preview-display-p (text)
+  "Return non-nil when TEXT contains a non-nil `display' property."
+  (and (> (length text) 0)
+       (text-property-not-all 0 (length text) 'display nil text)))
+
+(defun appkit-ui--one-line-preview-fallback (visual)
+  "Return a copy of VISUAL with display projections removed."
+  (let ((fallback (copy-sequence visual)))
+    (remove-list-of-text-properties 0 (length fallback) '(display) fallback)
+    fallback))
+
+(defun appkit-ui--one-line-preview-place-visual
+    (text visual head-length)
+  "Place VISUAL after TEXT's HEAD-LENGTH characters.
+
+TEXT and VISUAL are already styled and bounded by the caller."
+  (let ((offset (min (max 0 head-length) (length text))))
+    (cond
+     ((string-empty-p text) visual)
+     ((= offset 0) (concat visual " " text))
+     (t
+      (let ((head (substring text 0 offset))
+            (remainder (string-trim-left (substring text offset))))
+        (concat head " " visual
+                (unless (string-empty-p remainder)
+                  (concat " " remainder))))))))
+
+(defun appkit-ui--one-line-preview-style
+    (text base-face label-length label-face)
+  "Return a styled copy of TEXT for one-line preview rendering."
+  (let ((styled (copy-sequence text)))
+    (when (and base-face (> (length styled) 0))
+      (add-face-text-property 0 (length styled) base-face 'append styled))
+    (when (and label-face
+               (integerp label-length)
+               (> label-length 0)
+               (> (length styled) 0))
+      (add-face-text-property
+       0 (min label-length (length styled)) label-face nil styled))
+    styled))
+
+(cl-defun appkit-ui-render-one-line-preview
+    (preview width &key face elide-function)
+  "Render PREVIEW as a property-preserving fragment bounded to WIDTH columns.
+
+PREVIEW must be an `appkit-ui-one-line-preview'.  FACE is appended to all
+textual fragments; LABEL-FACE takes precedence only on LABEL.  ELIDE-FUNCTION,
+when non-nil, receives (TEXT WIDTH FACE) and supplies container-specific text
+measurement.  The returned string contains no newline and has no trailing
+newline."
+  (unless (appkit-ui-one-line-preview-p preview)
+    (signal 'wrong-type-argument
+            (list 'appkit-ui-one-line-preview-p preview)))
+  (let* ((limit (max 0 (or width 0)))
+         (elide (or elide-function
+                    #'appkit-ui--one-line-preview-default-elide))
+         (body
+          (appkit-ui-one-line-text
+           (appkit-ui-one-line-preview-text preview)))
+         (label
+          (appkit-ui-one-line-text
+           (appkit-ui-one-line-preview-label preview)))
+         (separator
+          (or (appkit-ui-one-line-preview-separator preview) ""))
+         (head (if (string-empty-p label)
+                   ""
+                 (concat label separator)))
+         (head-length (length head))
+         (text
+          (appkit-ui--one-line-preview-style
+           (cond
+            ((and (not (string-empty-p head))
+                  (not (string-empty-p body)))
+             (concat head " " body))
+            ((not (string-empty-p head)) head)
+            (t body))
+           face
+           (length label)
+           (appkit-ui-one-line-preview-label-face preview)))
+         (visual
+          (or (appkit-ui-one-line-preview-visual preview) ""))
+         (display-p (appkit-ui--one-line-preview-display-p visual))
+         (visual-columns
+          (appkit-ui-one-line-preview-visual-columns preview)))
+    (when (string-match-p "[\n\r]" separator)
+      (error "One-line preview separator contains a line break"))
+    (when (string-match-p "[\n\r]" visual)
+      (error "One-line preview visual contains a line break"))
+    (when (and display-p
+               (not (and (integerp visual-columns)
+                         (> visual-columns 0))))
+      (error "Displayed one-line preview visual needs positive columns"))
+    (let* ((graphical-visual-p
+            (and display-p
+                 (display-graphic-p)
+                 (display-images-p)))
+           (visual-width
+            (if graphical-visual-p
+                visual-columns
+              (string-width visual)))
+           (styled-visual
+            (appkit-ui--one-line-preview-style visual face nil nil))
+           (text-present-p (not (string-empty-p text))))
+      (cond
+       ((= limit 0) "")
+       ((string-empty-p visual)
+        (funcall elide text limit face))
+       ((> visual-width limit)
+        (if text-present-p
+            (funcall elide text limit face)
+          (funcall
+           elide
+           (appkit-ui--one-line-preview-style
+            (appkit-ui--one-line-preview-fallback visual) face nil nil)
+           limit face)))
+       ((not text-present-p)
+        styled-visual)
+       (t
+        (let ((text-width (- limit visual-width 1)))
+          (if (<= text-width 0)
+              styled-visual
+            (appkit-ui--one-line-preview-place-visual
+             (funcall elide text text-width face)
+             styled-visual
+             head-length))))))))
+
 (cl-defun appkit-ui-render-list-view (&key title summary loading-note
-                                          items item-inserter empty-text
-                                          footer-lines)
+                                           items item-inserter empty-text
+                                           footer-lines)
   "Render a simple list view block in current buffer.
 
-TITLE, SUMMARY and LOADING-NOTE are optional header lines.
-ITEMS are rendered by ITEM-INSERTER when present; otherwise EMPTY-TEXT is
-inserted (defaults to `(empty)').  FOOTER-LINES is an optional list of lines
-printed after the list with an extra separating blank line."
+  TITLE, SUMMARY and LOADING-NOTE are optional header lines.
+  ITEMS are rendered by ITEM-INSERTER when present; otherwise EMPTY-TEXT is
+  inserted (defaults to `(empty)').  FOOTER-LINES is an optional list of lines
+  printed after the list with an extra separating blank line."
   (when title
     (insert title "\n"))
   (when summary

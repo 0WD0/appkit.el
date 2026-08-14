@@ -188,6 +188,118 @@
       (forward-line 1)
       (should (equal "B " (get-text-property (point) 'line-prefix))))))
 
+(ert-deftest appkit-ui-one-line-preview-normalizes-and-styles-text ()
+  (let* ((preview
+          (appkit-ui-one-line-preview-create
+           :text "hello"
+           :label "Alice"
+           :separator ":"
+           :label-face 'success))
+         (rendered
+          (appkit-ui-render-one-line-preview preview 20 :face 'shadow)))
+    (should (equal "Alice: hello" (substring-no-properties rendered)))
+    (should (memq 'shadow
+                  (ensure-list (get-text-property 0 'face rendered))))
+    (should (memq 'success
+                  (ensure-list (get-text-property 0 'face rendered))))
+    (should-not
+     (memq 'success
+           (ensure-list (get-text-property 7 'face rendered))))))
+
+(ert-deftest appkit-ui-one-line-preview-reserves-graphical-visual-columns ()
+  (let* ((image '(image :type png :data "bytes"))
+         (visual (propertize "fallback" 'display image))
+         (preview
+          (appkit-ui-one-line-preview-create
+           :text "hello"
+           :visual visual
+           :visual-columns 2))
+         elide-width)
+    (cl-letf (((symbol-function 'display-graphic-p) (lambda (&rest _) t))
+              ((symbol-function 'display-images-p) (lambda (&rest _) t)))
+      (let ((rendered
+             (appkit-ui-render-one-line-preview
+              preview 6
+              :elide-function
+              (lambda (text width _face)
+                (setq elide-width width)
+                (substring text 0 (min width (length text)))))))
+        (should (= 3 elide-width))
+        (should (eq image (get-text-property 0 'display rendered)))
+        (should (equal "fallback hel"
+                       (substring-no-properties rendered)))))))
+
+(ert-deftest appkit-ui-one-line-preview-composes-label-chrome-and-image ()
+  (let* ((image '(image :type png :data "bytes"))
+         (visual (propertize "fallback" 'display image))
+         (preview
+          (appkit-ui-one-line-preview-create
+           :text "hello"
+           :label "Alice"
+           :separator ":"
+           :visual visual
+           :visual-columns 2
+           :label-face 'success)))
+    (cl-letf (((symbol-function 'display-graphic-p) (lambda (&rest _) t))
+              ((symbol-function 'display-images-p) (lambda (&rest _) t)))
+      (let* ((rendered
+              (appkit-ui-render-one-line-preview
+               preview 24 :face 'shadow))
+             (image-position
+              (text-property-any
+               0 (length rendered) 'display image rendered)))
+        (should (equal "Alice: fallback hello"
+                       (substring-no-properties rendered)))
+        (should (= 7 image-position))
+        (should
+         (eq 'success
+             (car (ensure-list
+                   (get-text-property 0 'face rendered)))))
+        (should-not
+         (memq 'success
+               (ensure-list
+                (get-text-property 5 'face rendered))))
+        (should-not
+         (memq 'success
+               (ensure-list
+                (get-text-property
+                 (1- (length rendered)) 'face rendered))))))))
+
+(ert-deftest appkit-ui-one-line-preview-bounds-terminal-fallback ()
+  (let* ((visual
+          (propertize "[image]" 'display '(image :type png :data "bytes")))
+         (preview
+          (appkit-ui-one-line-preview-create
+           :text "caption"
+           :visual visual
+           :visual-columns 2)))
+    (cl-letf (((symbol-function 'display-graphic-p) (lambda (&rest _) nil)))
+      (let ((rendered (appkit-ui-render-one-line-preview preview 11)))
+        (should (<= (string-width rendered) 11))
+        (should (string-prefix-p "[image] " rendered))))))
+
+(ert-deftest appkit-ui-one-line-preview-drops-oversized-visual-for-text ()
+  (let* ((visual
+          (propertize "[image]" 'display '(image :type png :data "bytes")))
+         (preview
+          (appkit-ui-one-line-preview-create
+           :text "caption"
+           :visual visual
+           :visual-columns 9)))
+    (cl-letf (((symbol-function 'display-graphic-p) (lambda (&rest _) t))
+              ((symbol-function 'display-images-p) (lambda (&rest _) t)))
+      (should
+       (equal "cap…"
+              (substring-no-properties
+               (appkit-ui-render-one-line-preview preview 4)))))))
+
+(ert-deftest appkit-ui-one-line-preview-requires-width-for-display-visual ()
+  (let ((preview
+         (appkit-ui-one-line-preview-create
+          :visual (propertize "[image]" 'display '(image :type png)))))
+    (should-error
+     (appkit-ui-render-one-line-preview preview 20))))
+
 (provide 'appkit-ui-test)
 
 ;;; appkit-ui-test.el ends here
