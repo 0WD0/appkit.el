@@ -98,6 +98,34 @@
         (should (= 2 appkit-chatbuf--input-idx))
         (should (equal "keep" appkit-chatbuf--input-pending))))))
 
+(ert-deftest appkit-chatbuf-composer-revision-tracks-semantic-slot-mutations ()
+  (with-temp-buffer
+    (appkit-chatbuf-init-state 8)
+    (should (= 0 (appkit-chatbuf-composer-revision)))
+    (appkit-chatbuf-input-state-set "draft")
+    (should (= 1 (appkit-chatbuf-composer-revision)))
+    (appkit-chatbuf-input-state-set (copy-sequence "draft"))
+    (should (= 1 (appkit-chatbuf-composer-revision)))
+    (appkit-chatbuf-input-options-set '(:send-on-return t))
+    (should (= 1 (appkit-chatbuf-composer-revision)))
+    (appkit-chatbuf-aux-set '(:aux-type reply :message-id "m1"))
+    (should (= 2 (appkit-chatbuf-composer-revision)))
+    (appkit-chatbuf-aux-set '(:aux-type reply :message-id "m1"))
+    (should (= 2 (appkit-chatbuf-composer-revision)))
+    (appkit-chatbuf-aux-reset)
+    (should (= 3 (appkit-chatbuf-composer-revision)))
+    (appkit-chatbuf-reset-state 8)
+    (should (= 4 (appkit-chatbuf-composer-revision)))))
+
+(ert-deftest appkit-chatbuf-composer-revision-includes-rich-input-properties ()
+  (with-temp-buffer
+    (appkit-chatbuf-init-state 8)
+    (appkit-chatbuf-input-state-set "file")
+    (let ((rich (copy-sequence "file")))
+      (add-text-properties 0 4 '(appkit-chatbuf-input-object attachment) rich)
+      (appkit-chatbuf-input-state-set rich))
+    (should (= 2 (appkit-chatbuf-composer-revision)))))
+
 (ert-deftest appkit-chatbuf-input-mutations-update-canonical-state ()
   (with-temp-buffer
     (appkit-chatbuf-init-state 8)
@@ -239,6 +267,21 @@
     (should (eq (key-binding (kbd "q")) #'self-insert-command))
     (insert "draft")
     (should (equal "draft" (appkit-chatbuf-input-state)))))
+
+(ert-deftest appkit-chatbuf-focus-input-moves-point-without-owning-modal-state ()
+  (with-temp-buffer
+    (appkit-chatbuf-mode)
+    (insert "timeline\n")
+    (appkit-chatbuf-bind-input-region
+     :visible-p t :prompt ">>> " :input-text "draft")
+    (appkit-chatbuf-use-timeline-mode
+     #'appkit-chatbuf-test--timeline-mode)
+    (goto-char (point-min))
+    (appkit-chatbuf-update-context-mode)
+    (should appkit-chatbuf-test--timeline-mode)
+    (should (= (point-max) (appkit-chatbuf-focus-input)))
+    (should (= (point) (appkit-chatbuf-input-logical-end-position)))
+    (should-not appkit-chatbuf-test--timeline-mode)))
 
 (ert-deftest appkit-chatbuf-structured-object-insert-and-prune ()
   (with-temp-buffer
