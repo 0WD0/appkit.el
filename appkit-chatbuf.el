@@ -91,6 +91,15 @@ without relying on protocol-specific object payloads.")
                               appkit-chatbuf-input-object-property nil
                               value)))
 
+(defun appkit-chatbuf--advance-composer-revision ()
+  "Advance and return the current composer state revision."
+  (setq appkit-chatbuf--composer-revision
+        (1+ appkit-chatbuf--composer-revision)))
+
+(defun appkit-chatbuf-composer-revision ()
+  "Return the monotonic revision of the canonical input and aux state."
+  appkit-chatbuf--composer-revision)
+
 (defun appkit-chatbuf-input-state ()
   "Return canonical chat composer input, preserving text properties."
   (appkit-chatbuf-copy-string appkit-chatbuf--input-cache))
@@ -99,7 +108,10 @@ without relying on protocol-specific object payloads.")
   "Set canonical composer input to VALUE, preserving text properties.
 
 When RESET-HISTORY-P is non-nil, clear shared history navigation state."
-  (setq appkit-chatbuf--input-cache (appkit-chatbuf-copy-string value))
+  (let ((new-value (appkit-chatbuf-copy-string value)))
+    (unless (equal-including-properties new-value appkit-chatbuf--input-cache)
+      (setq appkit-chatbuf--input-cache new-value)
+      (appkit-chatbuf--advance-composer-revision)))
   (when reset-history-p
     (appkit-chatbuf-input-history-reset))
   (appkit-chatbuf-input-state))
@@ -121,6 +133,7 @@ history navigation state is reset when RESET-HISTORY-P is non-nil."
          (changed-p (not (equal-including-properties text current))))
     (when changed-p
       (setq appkit-chatbuf--input-cache text)
+      (appkit-chatbuf--advance-composer-revision)
       (when reset-history-p
         (appkit-chatbuf-input-history-reset)))
     (list :value (appkit-chatbuf-copy-string appkit-chatbuf--input-cache)
@@ -146,6 +159,9 @@ history navigation state is reset when RESET-HISTORY-P is non-nil."
 
 (defvar-local appkit-chatbuf--input-cache ""
   "Canonical chat composer input, preserving structured text properties.")
+
+(defvar-local appkit-chatbuf--composer-revision 0
+  "Monotonic revision of canonical composer input and aux state.")
 
 (defvar-local appkit-chatbuf--aux-plist nil
   "Current aux state plist for the active chat buffer.")
@@ -216,6 +232,8 @@ markers and rings are reused when already present."
     (setq-local appkit-chatbuf--input-cache ""))
   (unless (local-variable-p 'appkit-chatbuf--aux-plist)
     (setq-local appkit-chatbuf--aux-plist nil))
+  (unless (local-variable-p 'appkit-chatbuf--composer-revision)
+    (setq-local appkit-chatbuf--composer-revision 0))
   (unless (local-variable-p 'appkit-chatbuf--input-options-plist)
     (setq-local appkit-chatbuf--input-options-plist nil))
   (unless (local-variable-p 'appkit-chatbuf--rendering)
@@ -227,6 +245,7 @@ markers and rings are reused when already present."
 This recreates prompt/input markers, clears prompt button state, allocates a
 fresh input history ring, and resets aux/input-options/rendering state.
 RING-SIZE overrides `appkit-chatbuf-input-ring-size' when non-nil."
+  (appkit-chatbuf--advance-composer-revision)
   (when (markerp appkit-chatbuf--input-marker)
     (set-marker appkit-chatbuf--input-marker nil))
   (when (markerp appkit-chatbuf--prompt-marker)
@@ -276,6 +295,16 @@ RING-SIZE overrides `appkit-chatbuf-input-ring-size' when non-nil."
   "Return logical end position of the current editable input region."
   (when (appkit-chatbuf-input-start-position)
     (point-max)))
+
+(defun appkit-chatbuf-focus-input ()
+  "Move point to the logical composer end and refresh point context.
+
+Return the new point, or nil when the input region is unavailable.  This
+function never changes modal editor state."
+  (when-let* ((position (appkit-chatbuf-input-logical-end-position)))
+    (goto-char position)
+    (appkit-chatbuf-update-context-mode)
+    position))
 
 (defun appkit-chatbuf-capture-window-input-offsets ()
   "Return (WINDOW . OFFSET) pairs for windows whose point is in composer input."
@@ -925,11 +954,14 @@ negative N delegates to `appkit-chatbuf-input-backward-delete'."
 
 (defun appkit-chatbuf-aux-set (aux-plist)
   "Replace current aux state with AUX-PLIST and return it."
-  (setq appkit-chatbuf--aux-plist aux-plist))
+  (unless (equal aux-plist appkit-chatbuf--aux-plist)
+    (setq appkit-chatbuf--aux-plist aux-plist)
+    (appkit-chatbuf--advance-composer-revision))
+  appkit-chatbuf--aux-plist)
 
 (defun appkit-chatbuf-aux-reset ()
   "Clear current aux state and return nil."
-  (setq appkit-chatbuf--aux-plist nil))
+  (appkit-chatbuf-aux-set nil))
 
 (defun appkit-chatbuf-aux-state ()
   "Return current shared aux state plist, or nil."
