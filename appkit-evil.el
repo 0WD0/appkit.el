@@ -74,6 +74,7 @@ When nil, leave Evil's initial-state selection untouched."
   (unless appkit-evil--deferred-bindings
     (remove-hook 'after-load-functions #'appkit-evil--after-load)))
 
+
 (defun appkit-evil-define-keys (states keymap-symbol &rest bindings)
   "Define Evil BINDINGS for STATES in KEYMAP-SYMBOL.
 
@@ -117,10 +118,7 @@ Call this before adding surface-specific bindings."
     (kbd "RET") #'appkit-directory-activate
     (kbd "<return>") #'appkit-directory-activate
     (kbd "TAB") #'appkit-directory-tab-dwim
-    (kbd "<backtab>") #'appkit-directory-previous-item
-    (kbd "g j") #'appkit-directory-next-item
-    (kbd "g k") #'appkit-directory-previous-item
-    (kbd "g u") #'appkit-directory-next-unread))
+    (kbd "<backtab>") #'appkit-directory-previous-item))
 
 ;;;###autoload
 (defun appkit-evil-setup ()

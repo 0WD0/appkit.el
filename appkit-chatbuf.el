@@ -19,6 +19,8 @@
 (require 'appkit-transaction)
 (require 'appkit-ui)
 
+(declare-function appkit-evil-normalize-keymaps "appkit-evil" ())
+
 (defcustom appkit-chatbuf-input-ring-size 50
   "Default size for shared chat buffer input history rings."
   :type 'integer
@@ -377,7 +379,9 @@ function never changes modal editor state."
     (let ((timeline-p (not (appkit-chatbuf-point-in-input-p)))
           (active-p (and (boundp mode) (symbol-value mode))))
       (unless (eq (not (null active-p)) timeline-p)
-        (funcall mode (if timeline-p 1 -1))))))
+        (funcall mode (if timeline-p 1 -1))
+        (when (fboundp 'appkit-evil-normalize-keymaps)
+          (appkit-evil-normalize-keymaps))))))
 
 (defun appkit-chatbuf-use-timeline-mode (mode)
   "Use minor MODE for commands outside the trailing composer.
@@ -387,12 +391,16 @@ that symbol.  Passing nil removes the current timeline mode."
   (unless (or (null mode)
               (and (symbolp mode) (fboundp mode) (boundp mode)))
     (error "Appkit timeline mode is unavailable: %S" mode))
-  (when (and appkit-chatbuf--timeline-mode
-             (boundp appkit-chatbuf--timeline-mode)
-             (symbol-value appkit-chatbuf--timeline-mode))
-    (funcall appkit-chatbuf--timeline-mode -1))
-  (setq-local appkit-chatbuf--timeline-mode mode)
-  (appkit-chatbuf-update-context-mode)
+  (let ((disabled-p
+         (and appkit-chatbuf--timeline-mode
+              (boundp appkit-chatbuf--timeline-mode)
+              (symbol-value appkit-chatbuf--timeline-mode))))
+    (when disabled-p
+      (funcall appkit-chatbuf--timeline-mode -1))
+    (setq-local appkit-chatbuf--timeline-mode mode)
+    (appkit-chatbuf-update-context-mode)
+    (when (and disabled-p (fboundp 'appkit-evil-normalize-keymaps))
+      (appkit-evil-normalize-keymaps)))
   mode)
 
 (defun appkit-chatbuf-post-command ()
