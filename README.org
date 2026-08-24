@@ -12,6 +12,23 @@ Current consumers include ~disco.el~, ~emacs-qq~, ~emacs-zulip~, and
 ~chirp~.  Appkit does not define Discord, QQ, channel, or message
 models.
 
+* Install
+
+#+begin_src emacs-lisp
+;; straight.el
+(use-package appkit
+  :straight (:host github :repo "emacs-im/appkit.el"))
+
+;; package-vc (Emacs 29+)
+(use-package appkit
+  :vc (:url "https://github.com/emacs-im/appkit.el"))
+#+end_src
+
+* Requirements
+
+- Emacs 27.1+
+- ~plz~ 0.8+
+
 * Depend
 
 Sibling packages load it as a local file dependency:
