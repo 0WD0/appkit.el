@@ -1,11 +1,11 @@
-;;; appkit.el --- Runtime primitives for stateful buffer applications -*- lexical-binding: t; -*-
+;;; appkit.el --- Runtime primitives for stateful buffer applications  -*- lexical-binding: t; -*-
 
 ;; Copyright (C) 2026 0WD0
 
-;; Author: 0WD0 <wd.1105848296@gmail.com>
-;; Maintainer: 0WD0 <wd.1105848296@gmail.com>
+;; Author: 0WD0 <me@0wd0.com>
+;; Maintainer: 0WD0 <me@0wd0.com>
 ;; Keywords: lisp, extensions
-;; URL: https://github.com/0WD0/appkit.el
+;; URL: https://github.com/emacs-im/appkit.el
 ;; Version: 0.2.16
 ;; Package-Requires: ((emacs "27.1") (plz "0.8"))
 
