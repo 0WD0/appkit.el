@@ -4,7 +4,7 @@
          "0.2.16"
          "Runtime primitives for stateful buffer applications")
 
-(website-url "https://github.com/0WD0/appkit.el")
+(website-url "https://github.com/emacs-im/appkit.el")
 (keywords "lisp" "extensions")
 
 (package-file "appkit.el")
