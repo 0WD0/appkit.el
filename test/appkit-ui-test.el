@@ -170,6 +170,47 @@
       (should-not (button-at (line-beginning-position 0)))
       (should-not called))))
 
+(ert-deftest appkit-ui-source-line-prefix-preserves-source-and-columns ()
+  (with-temp-buffer
+    (setq-local filter-buffer-substring-function
+                #'appkit-ui-buffer-substring-filter)
+    (insert ">> quoted\n")
+    (put-text-property
+     (point-min) (point-max) 'line-prefix "outer ")
+    (put-text-property
+     (point-min) (point-max) 'wrap-prefix "outer ")
+    (appkit-ui-apply-source-line-prefix
+     (point-min) (point-max) (point-min) (+ (point-min) 3) "││ ")
+    (should (equal ">> quoted\n"
+                   (buffer-substring-no-properties (point-min) (point-max))))
+    (let ((copied (filter-buffer-substring (point-min) (point-max))))
+      (should (equal ">> quoted\n" (substring-no-properties copied)))
+      (should-not
+       (text-property-not-all 0 (length copied) 'display nil copied)))
+    (should (equal "│" (get-text-property (point-min) 'display)))
+    (should (get-text-property (point-min) 'appkit-ui-source-line-marker))
+    ;; Source characters retain one visual column each.  A zero-width hidden
+    ;; marker would leave all these positions at column zero and lets modal
+    ;; left-motion appear to cross into the preceding line.
+    (dotimes (offset 4)
+      (goto-char (+ (point-min) offset))
+      (should (= offset (current-column))))
+    (should (equal "outer "
+                   (get-text-property (+ (point-min) 3) 'line-prefix)))
+    (should (equal "outer ││ "
+                   (get-text-property (+ (point-min) 3) 'wrap-prefix))))
+  ;; Graphical bars are represented by a character carrying an image display
+  ;; property.  The source character must receive the image itself, not a
+  ;; replacement string containing a nested display property (which Emacs does
+  ;; not render recursively).
+  (with-temp-buffer
+    (insert ">")
+    (let* ((image '(image :type svg :data "fake"))
+           (presentation (propertize " " 'display image)))
+      (appkit-ui-apply-source-line-prefix
+       (point-min) (point-max) (point-min) (point-max) presentation)
+      (should (equal image (get-text-property (point-min) 'display))))))
+
 (ert-deftest appkit-ui-prefix-state-consumes-first-prefix-once ()
   (let ((state (appkit-ui-make-prefix-state "first> " "rest> ")))
     (should (equal "raw> "
