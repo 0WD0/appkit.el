@@ -15,6 +15,7 @@
 
 (require 'button)
 (require 'cl-lib)
+(require 'color)
 (require 'subr-x)
 (require 'svg nil t)
 
@@ -87,13 +88,73 @@ Returns nil in terminal frames or when SVG is unavailable."
               (puthash key image appkit-ui--vbar-image-cache))
             image)))))
 
-(defun appkit-ui--vbar-string (face)
-  "One-column vertical bar string coloured with FACE.
-GUI frames get an SVG image; terminal frames get a plain ▏ character."
+(defun appkit-ui-vbar-string (face)
+  "Return a one-column vertical bar string coloured with FACE.
+
+GUI frames get an SVG image; terminal frames get a plain ▏ character.  The
+result is display-only presentation and may safely stand in for source text
+that remains in the buffer."
   (let ((image (appkit-ui--create-vbar-svg face)))
     (if image
         (propertize " " 'display image 'rear-nonsticky '(display))
       (if face (propertize "▏" 'face face) "▏"))))
+
+(defun appkit-ui--rgb-triple-p (value)
+  "Return non-nil when VALUE is an RGB triple of numeric channels."
+  (and (listp value)
+       (= (length value) 3)
+       (numberp (nth 0 value))
+       (numberp (nth 1 value))
+       (numberp (nth 2 value))))
+
+(defun appkit-ui--default-background-rgb ()
+  "Return current default background as an RGB triple, or nil."
+  (let ((background (face-background 'default nil t)))
+    (when (and (stringp background)
+               (not (member background '("unspecified" "unspecified-bg"))))
+      (ignore-errors (color-name-to-rgb background)))))
+
+(cl-defun appkit-ui-tinted-background-face (accent-face &key (alpha 0.10))
+  "Return a subtle background face derived from ACCENT-FACE.
+
+ALPHA is the fraction of ACCENT-FACE's foreground blended over the current
+default background and must be between zero and one.  The returned face uses
+`:extend t' so block-like rows paint to the visual line edge.  Return nil when
+either colour cannot be resolved."
+  (unless (and (numberp alpha) (<= 0 alpha) (<= alpha 1))
+    (error "Appkit tinted background alpha must be between zero and one"))
+  (let* ((accent-name (appkit-ui--face-foreground-color accent-face))
+         (accent (and (stringp accent-name)
+                      (ignore-errors (color-name-to-rgb accent-name))))
+         (background (appkit-ui--default-background-rgb)))
+    (when (and (appkit-ui--rgb-triple-p accent)
+               (appkit-ui--rgb-triple-p background))
+      (let ((blended
+             (cl-mapcar
+              (lambda (foreground base)
+                (+ (* alpha foreground) (* (- 1 alpha) base)))
+              accent background)))
+        `(:background ,(apply #'color-rgb-to-hex (append blended '(2)))
+          :extend t)))))
+
+(defun appkit-ui-buffer-substring-filter (beg end delete)
+  "Copy BEG..END while removing display-only Appkit presentation.
+
+Underlying source characters remain intact.  Thus a source marker such as `>'
+may be visually replaced by a vertical bar while copied and yanked text still
+contains the original marker.  When DELETE is non-nil, delete the source region
+after taking the copy."
+  (let ((text (buffer-substring beg end)))
+    (when delete
+      (save-excursion
+        (goto-char beg)
+        (delete-region beg end)))
+    (remove-list-of-text-properties
+     0 (length text)
+     '(display line-prefix wrap-prefix appkit-ui-source-line-marker
+       rear-nonsticky)
+     text)
+    text))
 
 ;;; ── Buttons & styled lines ──────────────────────────────────────────
 
@@ -326,7 +387,7 @@ the marker is an SVG image that fills the full line height so consecutive
 lines produce a seamless vertical bar.  The marker replaces INDENT's last
 column so card content stays column-aligned with normal lines."
   (let* ((base (or indent ""))
-         (mark (appkit-ui--vbar-string face))
+         (mark (appkit-ui-vbar-string face))
          (base-len (length base)))
     (if (> base-len 0)
         (concat (substring base 0 (1- base-len)) mark)
@@ -363,6 +424,94 @@ defaults to LINE-PREFIX-STR and is prepended to existing `wrap-prefix'."
        start end
        (list 'line-prefix (concat line (if (stringp existing-line) existing-line ""))
              'wrap-prefix (concat wrap (if (stringp existing-wrap) existing-wrap "")))))))
+
+(defun appkit-ui--append-wrap-prefix-span (start end wrap-prefix-str)
+  "Append a soft-wrap prefix to START..END.
+
+WRAP-PREFIX-STR is appended after any existing `wrap-prefix'.  The physical
+line's `line-prefix' is deliberately left untouched."
+  (when (< start end)
+    (let ((wrap (or wrap-prefix-str ""))
+          (existing-wrap (get-text-property start 'wrap-prefix)))
+      (add-text-properties
+       start end
+       (list
+        'wrap-prefix
+        (concat (if (stringp existing-wrap) existing-wrap "") wrap))))))
+
+(defun appkit-ui--source-character-display (fragment)
+  "Return the display replacement represented by one-character FRAGMENT.
+
+A presentation fragment may itself use a `display' property, as
+`appkit-ui-vbar-string' does for a graphical SVG bar.  Materialize that
+property directly on the source character: nested display strings are not
+redisplayed recursively by Emacs.  Otherwise preserve FRAGMENT and its face
+properties as the replacement string."
+  (or (and (> (length fragment) 0)
+           (get-text-property 0 'display fragment))
+      fragment))
+
+(defun appkit-ui--apply-source-character-displays
+    (source-start source-end presentation properties)
+  "Display PRESENTATION one-for-one over SOURCE-START..SOURCE-END.
+
+The source characters remain in the buffer.  PRESENTATION must contain exactly
+one character for each source character; each presentation character becomes
+the `display' replacement of its corresponding source character.  A display
+property carried by that presentation character is materialized directly
+instead of being nested inside another display string.  PROPERTIES are added
+to every source character."
+  (let ((source-length (- source-end source-start)))
+    (unless (= source-length (length presentation))
+      (error "Appkit source presentation length must match source span"))
+    (dotimes (offset source-length)
+      (let ((position (+ source-start offset))
+            ;; Keep one distinct display interval per source character.  This
+            ;; preserves its visual column and prevents adjacent replacements
+            ;; from becoming one cursor-hostile display run.
+            (fragment (copy-sequence
+                       (substring presentation offset (1+ offset)))))
+        (add-text-properties
+         position (1+ position)
+         (append
+          (list 'display (appkit-ui--source-character-display fragment)
+                'appkit-ui-source-line-marker t
+                'rear-nonsticky
+                '(display appkit-ui-source-line-marker))
+          properties))))))
+
+(cl-defun appkit-ui-apply-source-line-prefix
+    (line-start line-end source-start source-end prefix
+                &key continuation-prefix properties)
+  "Present a copyable source marker with PREFIX on one line.
+
+LINE-START..LINE-END is the complete line span.  SOURCE-START..SOURCE-END is a
+literal source marker that remains in the buffer and in copied text.  PREFIX
+must have exactly one character for each source character; its characters are
+displayed one-for-one over that source span, so normal cursor motion retains
+real visual columns.  CONTINUATION-PREFIX defaults to PREFIX and is appended to
+any existing `wrap-prefix' for soft-wrapped continuations.  The physical line's
+existing `line-prefix' is preserved.  PROPERTIES are added to the source marker
+span.  Return (LINE-START . LINE-END)."
+  (unless (and (integer-or-marker-p line-start)
+               (integer-or-marker-p line-end)
+               (integer-or-marker-p source-start)
+               (integer-or-marker-p source-end)
+               (<= (point-min) line-start source-start source-end line-end)
+               (<= line-end (point-max)))
+    (error "Appkit source line prefix bounds are invalid"))
+  (unless (stringp prefix)
+    (signal 'wrong-type-argument (list 'stringp prefix)))
+  (when (and continuation-prefix (not (stringp continuation-prefix)))
+    (signal 'wrong-type-argument (list 'stringp continuation-prefix)))
+  (unless (or (null properties) (listp properties))
+    (signal 'wrong-type-argument (list 'listp properties)))
+  (appkit-ui--apply-source-character-displays
+   source-start source-end prefix properties)
+  (when (< line-start line-end)
+    (appkit-ui--append-wrap-prefix-span
+     line-start line-end (or continuation-prefix prefix)))
+  (cons line-start line-end))
 
 (defun appkit-ui-apply-line-prefix (start end prefix)
   "Apply PREFIX as display prefix for region START..END.
