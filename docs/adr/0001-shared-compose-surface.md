@@ -1,24 +1,50 @@
-# Keep shared compose mechanics in Appkit and protocol semantics in clients
+# Separate chat compose geometry from generic editing authority
 
 **Status:** accepted
 
-Chirp's X Web composer and the planned `misskey.el` client, initially targeting Sharkey's Misskey-compatible API, need the same standalone compose mechanics while exposing different publishing semantics. Sharkey's current `notes/create` contract includes visibility, specified recipients, content warnings, local-only notes, reaction acceptance, reply and renote targets, channels, up to sixteen drive files, polls, and a separate scheduled-note endpoint; its web form also persists drafts, previews notes, edits media descriptions, and schedules posts. Chirp has the corresponding need for reply/quote context, media descriptions, reply controls, and later polls or scheduling.
+Chirp and prospective social clients need a shared multi-item editor: committed
+items are generated timeline rows, while a trailing chat composer edits one
+current item.  Other Appkit clients, including mail clients, may instead own a
+structured document and a dedicated major mode.  Treating either geometry as a
+universal Compose model makes protocol and document ownership leak into Appkit.
 
-Appkit will own a protocol-neutral standalone compose surface built on `appkit-chatbuf`: committed draft items are generated timeline rows, the trailing composer holds the current uncommitted or in-edit part, status fields live on the header line, and an in-flight submit session still carries optional 0-1 progress plus a cancel gesture. Clients decide whether those items become one X self-thread, a Misskey reply chain, or a single note. The surface is `appkit-compose` specialized from chatbuf, not an X, Mastodon, or Misskey model.
+Appkit therefore provides two distinct layers:
 
-Clients will own the opaque draft/context objects, field labels and values, protocol-specific validation and capabilities, attachment metadata, reply or renote semantics, visibility/content-warning meaning, poll and schedule rules, persistence, transport, how progress is measured, how cancel aborts that transport, and remote error or unknown-outcome behavior. Appkit will not define universal `Post`, `Note`, `Toot`, `Audience`, `Sensitive`, `Poll`, or `Reply` models. In particular, Misskey visibility is not the same concept as X reply audience, and Misskey `cw`/file sensitivity is not the same wire contract as X `possibly_sensitive`.
+1. `appkit-chat-compose` owns the concrete chatbuf-based multi-item geometry,
+   ordered item sequence, row/input transitions, and generated status/media
+   presentation used by social clients.
+2. `appkit-compose` owns only protocol-neutral editing authority: a semantic
+   generation, immutable capture, one view-local effect owner, stale-callback
+   fencing, optional progress, and cancellation requests.
 
-The Appkit layer must not acquire a Transient dependency. Clients may use Transient, `completing-read`, or another client-owned editor behind the shared field/action callbacks. Existing `appkit-ui`, `appkit-chat-completion`, and `appkit-media-*` APIs are the first reuse points; a new attachment or field abstraction is justified only by the concrete Chirp and `misskey.el` consumers.
+Clients own their document model, draft or workspace persistence, autosave
+policy, validation, close policy, attachments and identities, transport,
+reconciliation, and all accepted/rejected/unknown semantics.  Finishing an
+Appkit effect owner merely retires view-local authority; it never records a
+protocol outcome.
+
+The Appkit layer does not acquire a Transient dependency.  Clients may use
+Transient, `completing-read`, a dedicated major mode, or the concrete
+`appkit-chat-compose` surface.  Shared status and media presentation remain
+available without requiring a shared Draft model.
 
 ## Consequences
 
-- Chirp's next compose UI work should avoid a Chirp-only status-strip or attachment-row abstraction and should be migratable to `appkit-compose`.
-- `misskey.el` becomes the second consumer that validates the shared surface against Sharkey's richer note, poll, draft, and schedule workflow.
-- Protocol adapters remain explicit, so shared presentation does not erase differences such as `replyId` versus X reply metadata, `renoteId` versus quote posts, or `visibleUserIds` versus X reply controls.
-- The first implementation may keep client-local state while the shared contract is exercised; Appkit code should be added when the first common vertical slice is migrated, not as a speculative universal publishing framework.
+- Chirp uses `appkit-chat-compose` for its X post/thread editor and owns remote
+  draft, scheduled-post, and unknown-write state itself.
+- A mail client can use a dedicated structured editor while reusing Appkit
+  generation/capture and view-local effect fencing.
+- Generated chrome uses `appkit-compose-without-tracking`; semantic changes
+  outside text call `appkit-compose-touch` exactly once.
+- A new generic field, attachment, autosave, or outcome abstraction is added
+  only after multiple concrete clients demonstrate the same ownership rule.
 
 ## Rejected alternatives
 
-- **Keep complete compose UIs in each client:** rejected because the standalone editor, status strip, attachment rows, and generated-content invariants would be duplicated.
-- **Put a universal social-post model in Appkit:** rejected because Sharkey/Misskey and X use different concepts and wire contracts for visibility, sensitivity, reply, quote/renote, polls, and scheduling.
-- **Keep compose as a form of N editable bodies in one buffer:** rejected because generated chrome and user text share undo and point, and multi-part drafts already behave like a local unsent conversation.
+- **Keep the old chat composer named `appkit-compose`:** rejected because its
+  item/timeline geometry is not a universal document model.
+- **Put a universal Draft lifecycle in Appkit:** rejected because persistence,
+  remote publication, reconciliation, and close semantics differ by protocol.
+- **Duplicate all edit/effect fencing in every client:** rejected because
+  generation capture and stale view-local operation ownership are genuinely
+  protocol-neutral.
