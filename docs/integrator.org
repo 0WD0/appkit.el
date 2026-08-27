@@ -2,7 +2,7 @@
 #+options: toc:2 num:nil
 
 This guide is for authors of Appkit clients.  It is not an end-user
-manual.  Terms such as /compose submit/ and /transfer control/ are
+manual.  Terms such as /compose session/ and /transfer control/ are
 defined in [[file:../CONTEXT.md][CONTEXT.md]].
 
 * Ownership
@@ -20,8 +20,8 @@ Clients own application state, protocol adaptation, and branding.
 - Generated-content, property-only, and editable transactions
 - Stable-key EWOC reconciliation and independent semantic point and
   viewport
-- Chatbuf composers, compose surfaces, discussion rows, directories,
-  action spans, transfer controls, and name coloring
+- Mode-neutral compose sessions, chat composers, discussion rows,
+  directories, action spans, transfer controls, and name coloring
 - HTTPS-only media acquisition, preview processes, and media-card
   actions
 - Optional Evil bindings without a runtime Evil dependency
@@ -38,15 +38,44 @@ Clients own application state, protocol adaptation, and branding.
 
 * Surfaces
 
-** Compose submit
+** Compose primitives
 
-A standalone compose surface is a chatbuf.  Committed draft items are
-generated timeline rows.  The trailing composer holds the current
-uncommitted or in-edit part.  Status fields live on the header line.
+~appkit-compose-setup~ attaches protocol-neutral editing primitives to the
+current buffer without changing its major mode or document model.  The client
+supplies an owned snapshot function and, when only part of the buffer is
+semantic source, editable source bounds.
 
-An in-flight submit carries optional 0-1 progress and an optional
-client cancel hook.  Appkit presents that session; the client decides
-whether the ratio comes from curl, chunked upload, or nothing at all.
+Appkit owns exactly two reusable mechanisms:
+
+- a monotonic semantic generation and immutable
+  ~appkit-compose-capture~ result;
+- one view-local effect owner with stale-callback fencing, optional progress,
+  and cancellation request handling.
+
+Appkit does not save drafts, schedule autosave, decide close policy, persist an
+outcome, or classify completion as accepted, rejected, unknown, cancelled, or
+saved.  Those meanings belong to the client reducer.  Finishing an owner only
+retires its view-local authority.
+
+Generated chrome must use ~appkit-compose-without-tracking~.  Semantic changes
+outside editable text, such as an attachment or identity selection, call
+~appkit-compose-touch~ exactly once.  A client may compare the captured
+generation with its own durable revision, but Appkit does not own that durable
+frontier.
+
+** Chat compose
+
+~appkit-chat-compose-mode~ is the chat-specific multi-part editor.  Committed
+items are generated timeline rows and the trailing chatbuf composer edits one
+item at a time.  Use it for ordered social post threads, not as the universal
+Compose model.
+
+The client owns each item’s protocol metadata.  Appkit owns the single ordered
+item sequence, row/input geometry, and structural revisions.  Load a complete
+draft with ~appkit-chat-compose-set-items~ and read it with
+~appkit-chat-compose-items~; do not mirror that sequence in another buffer-local
+variable.  Status fields use the generic ~appkit-compose-*~ presentation
+functions.
 
 ** Transfer control
 
