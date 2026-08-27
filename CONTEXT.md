@@ -4,13 +4,21 @@ Appkit provides protocol-neutral runtime and presentation primitives for statefu
 
 ## Language
 
-**Compose surface**:
-A standalone chatbuf used to prepare one outbound social item. Committed draft items are generated timeline rows; the trailing composer holds the current uncommitted or in-edit part.
-_Avoid_: Post form, toot form, note form
+**Compose session**:
+Protocol-neutral editing authority attached to a client-owned document buffer. It owns a semantic generation, immutable capture, and one view-local effect owner with stale-result and cancellation fencing. Persistence, autosave, close policy, transport outcome, and document meaning stay in the client.
+_Avoid_: Draft reducer, mail composer, post form, transport request
+
+**Chat compose surface**:
+A chatbuf-based multi-part editor for outbound social items. Committed items are generated timeline rows; the trailing composer edits the current item.
+_Avoid_: Universal compose surface, document editor
 
 **Compose part**:
-One draft item on a compose surface. Committed parts are rendered; the current part is edited in the composer.
+One ordered item on a chat compose surface. Committed parts are rendered; the current part is edited in the trailing composer.
 _Avoid_: Tweet, note, thread item
+
+**Compose operation**:
+One view-local effect frozen at a semantic generation and owned by an opaque token. It remains current through a cancellation request until the client retires it. Appkit records no durable or protocol outcome.
+_Avoid_: SubmissionAttempt, DraftPublishAttempt, HTTP request, optimistic success
 
 **Status field**:
 A client-supplied label, value, and action describing one current compose setting without assigning that setting a cross-protocol meaning.
@@ -27,10 +35,6 @@ _Avoid_: Media resource (which is a readable or displayable resource)
 **Transfer control**:
 A timeline presentation of one in-flight or available byte transfer, with a direction, a state, optional 0-1 progress, optional byte counts, and a client action.
 _Avoid_: File upload, HTTP request, job, media resource
-
-**Compose submit**:
-An in-flight outbound attempt on a compose surface, with optional 0-1 progress and an optional client cancel hook.
-_Avoid_: File upload, HTTP request, job
 
 **Client semantics**:
 The protocol-specific meaning, validation, capability, persistence, transport, and error behavior supplied by a consuming package.

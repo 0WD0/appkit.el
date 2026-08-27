@@ -4,9 +4,9 @@
 * What it is
 
 Appkit is a protocol-neutral runtime for stateful Emacs clients.  It
-owns application and view lifecycle, keyed projections, chat
-composers, and reusable presentation geometry.  Client packages own
-protocol models, transport, and branding.
+owns application and view lifecycle, keyed projections, mode-neutral
+compose sessions, chat composers, and reusable presentation geometry.
+Client packages own protocol models, transport, and branding.
 
 Current consumers include ~disco.el~, ~emacs-qq~, ~emacs-zulip~, and
 ~chirp~.  Appkit does not define Discord, QQ, channel, or message
@@ -47,7 +47,7 @@ changelogs stay Markdown because agents and release tools already
 consume those files.
 
 - [[file:docs/integrator.org][Integrator guide]] — ownership, surfaces, update model, and tests
-- [[file:CONTEXT.md][Language]] — shared terms such as compose submit and transfer control
+- [[file:CONTEXT.md][Language]] — shared terms such as compose session and transfer control
 - [[file:docs/adr/][Decisions]] — accepted architectural trade-offs
 
 * Development
