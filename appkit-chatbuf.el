@@ -25,10 +25,28 @@
 (require 'appkit-ui)
 
 (declare-function appkit-evil-normalize-keymaps "appkit-evil" ())
+(declare-function visual-fill-column-mode "visual-fill-column" (&optional arg))
 
 (defcustom appkit-chatbuf-input-ring-size 50
   "Default size for shared chat buffer input history rings."
   :type 'integer
+  :group 'appkit)
+
+(defcustom appkit-chatbuf-wrap-long-lines t
+  "Whether Appkit chat buffers visually wrap long timeline lines.
+
+Derived clients can call `appkit-chatbuf-set-soft-wrap' to override this
+default for one buffer."
+  :type 'boolean
+  :group 'appkit)
+
+(defcustom appkit-chatbuf-use-visual-fill-column nil
+  "Whether wrapped Appkit chat buffers use `visual-fill-column-mode'.
+
+This integration is optional.  When enabled, Appkit loads the external
+`visual-fill-column' package when available; clients can customize its standard
+`visual-fill-column-width' and related options in their mode hooks."
+  :type 'boolean
   :group 'appkit)
 
 (defface appkit-chatbuf-input-object
@@ -78,6 +96,12 @@ payload equality must not define their deletion or serialization boundary.")
 
 This lets the shared repair pass reject an object whose interior was edited
 without relying on protocol-specific object payloads.")
+
+(defvar-local appkit-chatbuf-owns-wrap-prefix-p nil
+  "Non-nil when the current Appkit chat renderer owns continuation layout.
+
+Word-wrapping coordinators can use this capability to avoid enabling an
+automatic `wrap-prefix' producer such as `visual-wrap-prefix-mode'.")
 
 (defvar appkit-chatbuf--input-cache)
 
@@ -269,12 +293,38 @@ RING-SIZE overrides `appkit-chatbuf-input-ring-size' when non-nil."
   (setq-local appkit-chatbuf--input-options-plist nil)
   (setq-local appkit-chatbuf--rendering nil))
 
+
+(defun appkit-chatbuf-set-soft-wrap (enabled)
+  "Set renderer-compatible soft wrapping according to ENABLED.
+
+When ENABLED is non-nil, use `visual-line-mode' so Emacs wraps at word
+boundaries while honoring Appkit's `line-prefix' and `wrap-prefix' properties.
+When ENABLED is nil, truncate long lines.  Optional visual filling follows
+`appkit-chatbuf-use-visual-fill-column'.  This function never enables an
+automatic continuation-prefix producer."
+  (setq-local appkit-chatbuf-wrap-long-lines (not (null enabled)))
+  (if enabled
+      (visual-line-mode 1)
+    (visual-line-mode -1)
+    (setq-local truncate-lines t)
+    (setq-local word-wrap nil))
+  (let ((use-visual-fill
+         (and enabled appkit-chatbuf-use-visual-fill-column)))
+    (when (or (fboundp 'visual-fill-column-mode)
+              (and use-visual-fill
+                   (require 'visual-fill-column nil t)
+                   (fboundp 'visual-fill-column-mode)))
+      (visual-fill-column-mode (if use-visual-fill 1 -1))))
+  appkit-chatbuf-wrap-long-lines)
+
 (defun appkit-chatbuf-mode-setup ()
   "Apply telega-like chat buffer defaults in the current buffer."
   (setq-local switch-to-buffer-preserve-window-point nil)
   (setq-local window-point-insertion-type t)
   (setq-local next-line-add-newlines nil)
   (setq-local next-screen-context-lines 0)
+  (setq-local appkit-chatbuf-owns-wrap-prefix-p t)
+  (appkit-chatbuf-set-soft-wrap appkit-chatbuf-wrap-long-lines)
   (when (fboundp 'cursor-intangible-mode)
     (cursor-intangible-mode 1))
   (when (fboundp 'cursor-sensor-mode)
