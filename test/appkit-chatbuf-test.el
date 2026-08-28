@@ -15,6 +15,68 @@
   :lighter nil
   :keymap appkit-chatbuf-test--timeline-mode-map)
 
+(ert-deftest appkit-chatbuf-mode-owns-prefixes-and-wraps-by-default ()
+  (with-temp-buffer
+    (appkit-chatbuf-mode)
+    (should appkit-chatbuf-owns-wrap-prefix-p)
+    (should visual-line-mode)
+    (should word-wrap)
+    (should-not truncate-lines)
+    (should-not (bound-and-true-p visual-wrap-prefix-mode))))
+
+(ert-deftest appkit-chatbuf-soft-wrap-toggle-preserves-rendered-prefixes ()
+  (with-temp-buffer
+    (appkit-chatbuf-mode)
+    (insert (make-string 160 ?x) "\n")
+    (appkit-ui-apply-line-prefix
+     (point-min) (point-max)
+     (appkit-ui-make-prefix-state "HEAD> " "REST> "))
+    (let ((line-prefix (get-text-property (point-min) 'line-prefix))
+          (wrap-prefix (get-text-property (point-min) 'wrap-prefix)))
+      (appkit-chatbuf-set-soft-wrap nil)
+      (should-not appkit-chatbuf-wrap-long-lines)
+      (should-not visual-line-mode)
+      (should truncate-lines)
+      (should-not word-wrap)
+      (should (equal line-prefix
+                     (get-text-property (point-min) 'line-prefix)))
+      (should (equal wrap-prefix
+                     (get-text-property (point-min) 'wrap-prefix)))
+      (appkit-chatbuf-set-soft-wrap t)
+      (should appkit-chatbuf-wrap-long-lines)
+      (should visual-line-mode)
+      (should word-wrap)
+      (should-not truncate-lines)
+      (should (equal wrap-prefix
+                     (get-text-property (point-min) 'wrap-prefix))))))
+
+(ert-deftest appkit-chatbuf-mode-allows-soft-wrap-opt-out ()
+  (with-temp-buffer
+    (let ((appkit-chatbuf-wrap-long-lines nil))
+      (appkit-chatbuf-mode))
+    (should appkit-chatbuf-owns-wrap-prefix-p)
+    (should-not visual-line-mode)
+    (should truncate-lines)
+    (should-not word-wrap)))
+
+(ert-deftest appkit-chatbuf-soft-wrap-coordinates-optional-visual-fill ()
+  (let (calls)
+    (with-temp-buffer
+      (let ((appkit-chatbuf-use-visual-fill-column t))
+        (cl-letf (((symbol-function 'visual-fill-column-mode)
+                   (lambda (argument)
+                     (setq-local visual-fill-column-mode (> argument 0))
+                     (setq calls (append calls (list argument))))))
+          (appkit-chatbuf-mode)
+          (should visual-fill-column-mode)
+          (should (equal calls '(1)))
+          (appkit-chatbuf-set-soft-wrap nil)
+          (should-not visual-fill-column-mode)
+          (should (equal calls '(1 -1)))
+          (appkit-chatbuf-set-soft-wrap t)
+          (should visual-fill-column-mode)
+          (should (equal calls '(1 -1 1))))))))
+
 (ert-deftest appkit-chatbuf-install-prompt-creates-tail-input-region ()
   (with-temp-buffer
     (insert "timeline\n")
