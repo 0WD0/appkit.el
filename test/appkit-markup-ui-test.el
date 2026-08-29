@@ -154,6 +154,43 @@
           (delete-char 1))))
       (should (equal (buffer-string) "protected")))))
 
+(ert-deftest appkit-markup-ui-inserter-cannot-delete-existing-suffix ()
+  (with-temp-buffer
+    (insert "suffix")
+    (goto-char (point-min))
+    (let ((document
+           (appkit-markup-document
+            (list (appkit-markup-object-block 'provider nil)))))
+      (should-error
+       (appkit-markup-ui-insert-document
+        document
+        :interactive-p t
+        :object-inserter
+        (lambda (_node)
+          (delete-char 1)
+          (insert "object"))))
+      (should (equal (buffer-string) "suffix")))))
+
+(ert-deftest appkit-markup-ui-link-factory-cannot-mutate-render-buffer ()
+  (with-temp-buffer
+    (let ((document
+           (appkit-markup-document
+            (list
+             (appkit-markup-paragraph
+              (list
+               (appkit-markup-link
+                "https://example.test"
+                (list (appkit-markup-text "link")))))))))
+      (should-error
+       (appkit-markup-ui-insert-document
+        document
+        :interactive-p t
+        :link-action
+        (lambda (_url)
+          (insert "mutation")
+          #'ignore)))
+      (should (string-empty-p (buffer-string))))))
+
 (provide 'appkit-markup-ui-test)
 
 ;;; appkit-markup-ui-test.el ends here

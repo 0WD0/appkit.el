@@ -2,8 +2,9 @@
 #+options: toc:3 num:nil
 
 Appkit separates protocol-neutral editing authority from chat-specific
-multi-part geometry.  The separation is implemented by ~appkit-compose.el~ and
-~appkit-chat-compose.el~ in Appkit 0.2.18.
+multi-part geometry and source-markup interpretation.  The layers are
+implemented by ~appkit-compose.el~, ~appkit-chat-compose.el~, and
+~appkit-markup-compose.el~ in Appkit 0.2.21.
 
 * Ownership
 
@@ -99,6 +100,26 @@ The capture is the immutable authority used by one client operation.  A client
 does not rebuild transport input from the live buffer after beginning a write.
 Appkit does not copy or interpret the captured value; the snapshot function must
 return owned data.
+
+** Source-backed markup capture
+
+~appkit-markup-compose-setup~ configures a client-owned ordered codec list,
+active codec, context function, structured-object classifier, and object
+printer on top of the generic session.  Changing the persistent active codec is
+a semantic state change and advances the generic compose generation exactly
+once.
+
+~appkit-markup-compose-capture~ consumes one generic capture and freezes:
+
+- generation and selected source codec;
+- codec context and object-printer identity;
+- normalized Document, diagnostics, and side channels.
+
+Pure preview and provider output consume that same capture; neither rereads the
+live source.  A universal prefix may select another configured codec for one
+capture without changing the persistent active codec.  See
+[[file:markup.org][markup documents]] for parsing, printing, object fencing,
+source edits, and semantic-loss handling.
 
 ** Compose operation
 

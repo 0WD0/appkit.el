@@ -59,19 +59,16 @@
       (appkit-markup-invalid
        (should-not (string-match-p secret (format "%S" condition)))))))
 
-(ert-deftest appkit-markup-rejects-cyclic-node-graphs ()
-  (let* ((paragraph (appkit-markup-paragraph nil))
-         (quote (appkit-markup-quote (list paragraph))))
-    ;; Public values are immutable by contract; validation still rejects a
-    ;; caller that violates that contract through generated struct setters.
-    (setf (appkit-markup-paragraph-children paragraph)
-          (list (appkit-markup-object 'cycle nil)))
-    (setf (appkit-markup-object-fallback
-           (car (appkit-markup-paragraph-children paragraph)))
-          (list (appkit-markup-object
-                 'nested (list (appkit-markup-text "safe")))))
-    (should (appkit-markup-document (list quote)))
-    (setf (appkit-markup-quote-blocks quote) (list quote))
+(ert-deftest appkit-markup-values-are-read-only-and-cycles-still-rejected ()
+  (let ((paragraph (appkit-markup-paragraph nil)))
+    (should-error
+     (setf (appkit-markup-paragraph-children paragraph)
+           (list (appkit-markup-text "changed")))))
+  ;; Deliberate representation corruption remains rejected at the public
+  ;; document boundary even though public accessors expose no setters.
+  (let* ((blocks (list nil))
+         (quote (appkit-markup--quote-create :blocks blocks)))
+    (setcar blocks quote)
     (should-error (appkit-markup-document (list quote))
                   :type 'appkit-markup-invalid)))
 

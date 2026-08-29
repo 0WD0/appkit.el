@@ -92,36 +92,49 @@ draft with ~appkit-chat-compose-set-items~ and read it with
 variable.  Status fields use the generic ~appkit-compose-*~ presentation
 functions.
 
-Part bodies remain plain strings in Appkit 0.2.20; the chat-compose item merge
+Part bodies remain plain strings in Appkit 0.2.21; the chat-compose item merge
 removes text properties.  Use the property-preserving ~appkit-chatbuf~ input
 state directly when structured objects must survive capture.
 
 ** Markup documents
 
 [[file:markup.org][Markup documents]] define the semantic model, native UI,
-future codec registry, structured-object fencing, source editing, preview, and
+codec registry, structured-object fencing, source editing, preview, and
 plain-text export contracts.
 
-Appkit 0.2.20 provides ~appkit-markup~ and ~appkit-markup-ui~.  Construct a
-normalized Document with the public node constructors, then insert it through:
+Appkit 0.2.21 ships ~appkit-markup~, ~appkit-markup-ui~,
+~appkit-markup-codec~, ~appkit-markup-codecs~, and
+~appkit-markup-compose~.  Direct provider adapters still construct Documents
+without printing and reparsing provider data.
+
+Source-backed compose setup layers on an existing generic compose session:
 
 #+begin_src emacs-lisp
-(appkit-markup-ui-insert-document
- document
- :prefix prefix
- :properties row-properties
- :final-newline-p t
- :interactive-p t
- :link-action link-action-resolver
- :object-inserter client-object-inserter)
+(appkit-compose-setup
+ :snapshot-function #'client-property-preserving-source
+ :source-bounds-function #'client-source-bounds)
+
+(appkit-markup-compose-setup
+ :codecs '(markdown org plain)
+ :active-codec 'markdown
+ :object-classifier #'client-classify-object
+ :object-printer #'client-print-object)
 #+end_src
 
-Use ~:interactive-p nil~ for previews; Appkit then invokes no client callback
-and traverses object fallback.  A structured provider representation uses a
-client direct adapter.  Raw editable markup will use an explicitly selected
-codec after the codec layer ships.  Do not print structured provider values to
-text and parse them again, and do not feed arbitrary protocol text to a generic
-Markdown codec.
+~appkit-markup-compose-capture~ freezes generation, selected source codec,
+context, object-printer identity, parsed Document, diagnostics, and side
+channels.  Use that same capture for
+~appkit-markup-compose-preview~ and ~appkit-markup-compose-output~.  Inspect
+losses before transport; never silently flatten unsupported semantics.
+
+~org~ uses built-in ~org-element~ without enabling Org mode or hooks.
+~markdown~ is a deterministic local compose grammar.  ~plain~ treats syntax
+markers literally.  Universal prefixes select later configured codecs in the
+same order as Telega.  One active-codec change calls ~appkit-compose-touch~.
+
+For incoming presentation, construct a normalized Document and call
+~appkit-markup-ui-insert-document~.  Use ~:interactive-p nil~ for previews;
+Appkit then invokes no link/object/code callback and traverses stored fallback.
 
 ** Transfer control
 
