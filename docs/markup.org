@@ -7,12 +7,14 @@ Chirp rich text and Telega migration are outside the first integration scope.
 
 * Current source status
 
-Appkit 0.2.18 does not contain an ~appkit-markup~ module, registry, document
-structs, codecs, or public ~appkit-markup-*~ symbols.  The API forms below are
-the accepted target design, not callable current API.  ~appkit.el~ must not
-require markup modules until those modules and their tests are implemented.
+Appkit 0.2.20 contains the semantic document core and native UI insertion
+boundary.  It provides immutable-by-contract block/inline values,
+normalization, validation, semantic equality, plain-text export, and
+transactional insertion.  Codec registration, source parsing/printing,
+diagnostics, semantic-loss records, and structured-object fencing remain target
+design rather than callable API.
 
-The current source already provides the required lower-level extension points:
+The current source also provides the lower-level compose extension points:
 
 - ~appkit-compose-setup~ accepts a client snapshot function and semantic source
   bounds without inspecting the captured value;
@@ -21,12 +23,10 @@ The current source already provides the required lower-level extension points:
   sentinels, atomic deletion, and repair;
 - equal adjacent opaque payloads remain distinct occurrences.
 
-Two current limitations are explicit.  Shared chatbuf history skips
+Two compose limitations remain explicit.  Shared chatbuf history skips
 object-bearing entries, and ~appkit-chat-compose~ strips text properties when it
-merges a part body.  The first Slackit and Disco integrations use their existing
-property-preserving ~appkit-chatbuf-mode~ composers.  Neither mixed-object
-history nor property-preserving multi-part chat compose is implied by this
-design.
+merges a part body.  Neither mixed-object history nor property-preserving
+multi-part chat compose is implied by the document/UI implementation.
 
 * Ownership
 
@@ -88,9 +88,9 @@ A document contains an ordered list of these blocks:
 - *paragraph*: ordered inline children;
 - *heading*: level 1 through 6 and ordered inline children;
 - *quote*: ordered child blocks;
-- *list*: ~ordered~ or ~unordered~ style, non-negative indentation, optional
-  positive starting number, and ordered list items;
-- *list item*: ordered child blocks;
+- *list*: ~ordered~ or ~unordered~ style, optional positive starting number,
+  and ordered list items;
+- *list item*: ordered child blocks, including nested lists;
 - *preformatted*: exact text and optional opaque language name;
 - *object block*: opaque client value and ordered fallback blocks.
 
@@ -103,7 +103,7 @@ its encoder and reports semantic loss.
 A paragraph, heading, or other inline container contains:
 
 - *text*: exact text and normalized styles;
-- *link*: URL and ordered inline label children;
+- *link*: URL and one or more styled-text label children;
 - *object*: opaque client value, ordered fallback inline children, and
   normalized styles;
 - *line break*: explicit break within the containing block.
@@ -116,10 +116,11 @@ The style set is:
 - ~strike~
 - ~code~
 
-A link may contain adjacent label runs with different styles.  A provider that
-allows only one style set per link splits it into adjacent links with the same
-URL.  Inline-code and preformatted contents are literal; codecs do not parse
-markup, emoji, mentions, or links inside them.
+A link may contain adjacent text label runs with different styles, but never a
+nested link, object, or line break.  Provider adapters flatten richer labels to
+visible styled text so one link owns one unambiguous action span.  Inline-code
+and preformatted contents are literal; codecs do not parse markup, emoji,
+mentions, or links inside them.
 
 ** Provider extensions
 
@@ -144,21 +145,51 @@ print it.
 Normalized documents satisfy these invariants:
 
 - every child sequence is a proper list and valid at its structural depth;
-- empty text nodes are removed;
+- every semantic string has no text properties;
+- text nodes contain no CR/LF; line breaks and block boundaries own newlines;
+- empty text, paragraph, heading, quote, and list nodes are removed;
+- empty preformatted blocks, object fallbacks, and list items are retained;
 - adjacent text nodes with equal styles are merged;
 - style order is canonical and duplicate-free;
 - heading levels are 1 through 6;
-- list indentation is non-negative and a present start is positive;
+- list nesting is expressed only by a list inside a list item;
+- a present ordered-list start is positive;
 - a language is an opaque non-empty string and is never inferred from code;
 - URLs remain strings, but Appkit does not certify them as safe or
   provider-valid;
 - opaque values are compared only through occurrence identity or a
   client-supplied equality operation;
-- diagnostics and equality failures contain no text, URL, language, opaque
-  value, or code body.
+- node graphs and child lists are acyclic;
+- errors and equality failures contain no text, URL, language, opaque value, or
+  code body.
 
 Parse diagnostics use Emacs character positions.  Provider byte, code-point, or
 UTF-16 coordinates are client adapter concerns.
+
+* Native UI insertion
+
+~appkit-markup-ui-insert-document~ renders shared nodes to native Emacs text,
+faces, display prefixes, and Appkit action spans.  It accepts outer ~prefix~ and
+row ~properties~ values compatible with an ~appkit-discussion~
+~body-inserter(prefix properties)~ callback.
+
+The insertion contract is:
+
+- insertion is one ~atomic-change-group~ and returns exact ~(START . END)~
+  bounds;
+- ~:final-newline-p~ defaults to non-nil and controls only the final block
+  terminator;
+- outer row properties cover the complete inserted region but may not contain
+  renderer-owned face, display, prefix, keymap, pointer, help, or Appkit action
+  properties;
+- callbacks may only insert forward in the current narrowed buffer;
+- ~:interactive-p nil~ never invokes link, object, or preformatted callbacks;
+  links are inert, objects traverse stored fallback, and code uses fixed-pitch;
+- clients own URL safety, provider-object rendering, actions, spoiler state,
+  code-language presentation, and media acquisition.
+
+Quote and list geometry is display-only.  Semantic copy/export traverses the
+Document and does not depend on rendered buffer prefixes.
 
 * Codec contract
 
@@ -495,27 +526,30 @@ presentation decision after markup parsing is stable.
 
 * Integration sequence
 
-1. Implement document values, normalization, validation, equality, result
-   values, object classification, and the codec registry.
-2. Implement ~plain~, Org, and chat-Markdown with semantic round-trip and
+1. Implement document values, normalization, validation, semantic equality,
+   plain export, and transactional native insertion.
+2. Adapt Zulip's authoritative server-rendered HTML directly to Documents and
+   cut its timeline, summary, copy, identity, navigation, time, spoiler, and
+   media fallback paths over to native insertion.
+3. Implement codec result values, the registry, ~plain~, and structured-object
+   fencing with original-source coordinate mapping and parser-visible
+   side-channel barriers.
+4. Implement Org and chat-Markdown with bounded semantic round-trip and
    malformed-input tests.
-3. Implement source edits, selection, lossless edit-codec choice, preview, and
-   plain export without changing client keymaps.
-4. Register ~discord~ and cut over Disco's read path while retaining its current
-   interaction and copy contracts.
-5. Add Slackit's direct rich-text adapter and document renderer; remove code
+5. Implement source edits, selection, lossless edit-codec choice, and preview
+   without changing client keymaps.
+6. Register ~discord~ and cut over Disco's read path while retaining its
+   interaction and semantic-copy contracts.
+7. Add Slackit's direct rich-text adapter and document renderer; remove code
    descriptor matching after language, identity, code, and fallback contracts
    pass through the new path.
-6. Cut over Slackit send/edit to one captured ~text + blocks~ snapshot.
-7. Cut over Disco completion, attachment classification, preview, send/edit,
-   and semantic long-message splitting.
-8. Delete obsolete client parsers, plaintext cache keys, descriptor matching,
+8. Cut over Slackit and Disco compose/send/edit to immutable captured documents
+   and provider-exact wire snapshots.
+9. Delete obsolete client parsers, plaintext cache keys, descriptor matching,
    duplicate edit paths, and pass-through helpers in the same cutovers.  There
    are no aliases or parallel legacy paths.
-9. Update the integrator guide and client Appkit dependency floors with the
-   actual public API and release version.
-10. Evaluate other clients separately after Slackit and Disco prove the
-    contract.
+10. Update the integrator guide and client Appkit dependency floors with each
+    released public API.
 
 * Verification contracts
 

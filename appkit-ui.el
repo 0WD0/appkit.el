@@ -538,8 +538,16 @@ PREFIX can be a string or a mutable prefix-state created by
                 (appkit-ui--apply-line-prefix-span pos next-pos line-prefix rest-prefix)
                 (setq line-prefix rest-prefix)
                 (setq pos next-pos)))))
-      (appkit-ui--apply-line-prefix-span
-       start end (appkit-ui-prefix-string prefix nil "")))))
+      (let ((pos start)
+            (line-prefix (appkit-ui-prefix-string prefix nil "")))
+        (save-excursion
+          (while (< pos end)
+            (goto-char pos)
+            (let* ((line-end (line-end-position))
+                   (next-pos (if (< line-end end) (1+ line-end) end)))
+              (appkit-ui--apply-line-prefix-span
+               pos next-pos line-prefix line-prefix)
+              (setq pos next-pos))))))))
 
 ;;; ── High-level inserters ───────────────────────────────────────────
 

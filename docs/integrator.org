@@ -92,23 +92,36 @@ draft with ~appkit-chat-compose-set-items~ and read it with
 variable.  Status fields use the generic ~appkit-compose-*~ presentation
 functions.
 
-Part bodies are plain strings in Appkit 0.2.18; the chat-compose item merge
+Part bodies remain plain strings in Appkit 0.2.20; the chat-compose item merge
 removes text properties.  Use the property-preserving ~appkit-chatbuf~ input
 state directly when structured objects must survive capture.
 
 ** Markup documents
 
-[[file:markup.org][Markup documents]] record the accepted semantic model, codec
-registry, structured-object fencing, source editing, preview, and plain-text
-export design for formatted composers.  Appkit 0.2.18 does not yet provide
-~appkit-markup-*~ modules or public symbols; integrators must not call the
-illustrative target API until it is implemented.
+[[file:markup.org][Markup documents]] define the semantic model, native UI,
+future codec registry, structured-object fencing, source editing, preview, and
+plain-text export contracts.
 
-The existing extension points are property-preserving chatbuf input and custom
-~appkit-compose~ snapshots.  Structured provider content will use a client
-adapter; raw markup source will use an explicitly selected codec.  Do not print
-a structured provider value to text and parse it again, and do not feed
-arbitrary protocol text to a generic Markdown codec.
+Appkit 0.2.20 provides ~appkit-markup~ and ~appkit-markup-ui~.  Construct a
+normalized Document with the public node constructors, then insert it through:
+
+#+begin_src emacs-lisp
+(appkit-markup-ui-insert-document
+ document
+ :prefix prefix
+ :properties row-properties
+ :final-newline-p t
+ :interactive-p t
+ :link-action link-action-resolver
+ :object-inserter client-object-inserter)
+#+end_src
+
+Use ~:interactive-p nil~ for previews; Appkit then invokes no client callback
+and traverses object fallback.  A structured provider representation uses a
+client direct adapter.  Raw editable markup will use an explicitly selected
+codec after the codec layer ships.  Do not print structured provider values to
+text and parse them again, and do not feed arbitrary protocol text to a generic
+Markdown codec.
 
 ** Transfer control
 
