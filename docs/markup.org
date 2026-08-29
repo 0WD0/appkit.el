@@ -8,7 +8,7 @@ migrations remain later client work.
 
 * Current source status
 
-Appkit 0.2.21 contains the semantic document core, native UI insertion,
+Appkit 0.3.0 contains the semantic document core, native UI insertion,
 property-preserving codec boundary, and source-backed compose workflow.  It
 provides:
 
@@ -24,8 +24,9 @@ provides:
 
 The ~org~ parser explicitly uses Emacs's built-in ~org~ and ~org-element~
 semantics in a temporary buffer.  It never enables ~org-mode~, Font Lock,
-Babel, language modes, or user hooks.  ~markdown~ is Appkit's local
-deterministic compose parser; it performs no subprocess or package work.
+Babel, language modes, or user hooks.  ~markdown~ directly adapts the pinned
+GNU Emacs ~markdown~ and ~markdown-inline~ Tree-sitter grammars without
+enabling ~markdown-ts-mode~, Font Lock, embedded language modes, or user hooks.
 
 Two chatbuf limitations remain explicit.  Shared history skips object-bearing
 entries, and ~appkit-chat-compose~ strips text properties when it merges a part
@@ -231,12 +232,25 @@ The built-in codecs are:
 - ~org~: real ~org-element~ parsing for paragraphs, headings, emphasis,
   underline, strike, inline code, described links, quotes, lists, and
   ~#+begin_src~ blocks;
-- ~markdown~: paragraphs, headings, bold, italic, strike, inline and fenced
-  code, described links, quotes, and nested lists.
+- ~markdown~: CommonMark/GFM paragraphs, ATX and Setext headings, bold, italic,
+  strike, inline, indented, and fenced code, described links, quotes, and
+  nested lists.
 
 Markdown has no underline marker.  Converting an Org underline to Markdown
 therefore returns a semantic-loss record instead of silently changing it.
 Provider-exact grammars and wire encoders remain client-owned.
+
+Markdown composition requires Emacs 31.1 and both Tree-sitter grammars.  Grammar
+installation is always explicit:
+
+#+begin_src emacs-lisp
+(appkit-markup-markdown-ts-ready-p)
+(appkit-markup-markdown-ts-install-grammars)
+#+end_src
+
+The installer uses the same pinned tree-sitter-markdown commit as GNU Emacs.
+Parsing never downloads, compiles, or updates a grammar.  Missing grammars
+produce a content-free codec error.
 
 Slackit may register ~slack-mrkdwn~ and Disco may register ~discord~ during
 their migrations.  Neither provider grammar becomes an Appkit built-in.
@@ -512,12 +526,12 @@ Markup operations are local deterministic transformations:
   transport work;
 - Org parsing uses built-in ~org-element~ but never evaluates Babel, expands
   through user code, enables ~org-mode~, loads a language, or runs hooks;
-- Markdown parsing does not run Font Lock, Tree-sitter, LSP, or an external
-  converter;
+- Markdown parsing directly uses pinned Tree-sitter grammars but never enables
+  ~markdown-ts-mode~, Font Lock, an embedded language mode, or LSP;
 - language names remain opaque metadata;
 - source and structured-object occurrence counts are bounded before provider
   transport;
-- malformed input becomes literal text without retry loops;
+- unsupported syntax nodes use bounded literal fallback plus diagnostics;
 - registries contain functions and capability names, never source content;
 - Appkit owns no global source or Document cache;
 - source text, URLs, opaque values, contact data, and code bodies never appear
@@ -532,15 +546,15 @@ presentation decision after markup parsing is stable.
 
 * Integration sequence
 
-Completed in Appkit 0.2.21 and emacs-zulip:
+Completed in Appkit 0.3.0 and emacs-zulip:
 
 1. Document values, normalization, equality, plain export, and transactional
    native insertion.
 2. Zulip server HTML direct adaptation and native timeline rendering.
 3. Codec results, registry, ~plain~, structured-object fencing, side channels,
    and coordinate mapping.
-4. Real ~org-element~ parsing, local Markdown parsing, canonical printers, and
-   semantic round-trip tests.
+4. Real ~org-element~ parsing, direct Markdown Tree-sitter adaptation,
+   canonical printers, and semantic round-trip tests.
 5. Source edits, active/prefix codec selection, immutable capture, pure
    preview, semantic-loss rejection, and Zulip Markdown output.
 6. Zulip compose/send/edit cutover, including exact mention object printing and

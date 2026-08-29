@@ -63,6 +63,20 @@
        (appkit-markup-equal-p
         document (appkit-markup-parse-result-document parsed))))))
 
+(ert-deftest appkit-markup-markdown-printer-preserves-nested-style-runs ()
+  (let* ((document
+          (appkit-markup-parse-result-document
+           (appkit-markup-parse 'markdown "**bold _italic_**")))
+         (printed (appkit-markup-print 'markdown document))
+         (parsed
+          (appkit-markup-parse
+           'markdown (appkit-markup-print-result-source printed))))
+    (should (equal (appkit-markup-print-result-source printed)
+                   "**bold *italic***"))
+    (should
+     (appkit-markup-equal-p
+      document (appkit-markup-parse-result-document parsed)))))
+
 (ert-deftest appkit-markup-markdown-printer-preserves-link-backslashes ()
   (let* ((document
           (appkit-markup-document
@@ -138,12 +152,71 @@
                  (memq 'italic (appkit-markup-text-styles node))))
           children))))))
 
-(ert-deftest appkit-markup-malformed-fence-remains-literal ()
-  (let* ((source "```elisp\n(message \"not closed\")")
-         (result (appkit-markup-parse 'markdown source)))
-    (should (equal (appkit-markup-plain-text
-                    (appkit-markup-parse-result-document result))
-                   source))))
+(ert-deftest appkit-markup-unclosed-fence-is-semantic-code ()
+  (let* ((result
+          (appkit-markup-parse
+           'markdown "```elisp\n(message \"not closed\")"))
+         (block
+          (car
+           (appkit-markup-document-blocks
+            (appkit-markup-parse-result-document result)))))
+    (should (appkit-markup-preformatted-p block))
+    (should (equal (appkit-markup-preformatted-language block) "elisp"))
+    (should (equal (appkit-markup-preformatted-text block)
+                   "(message \"not closed\")"))))
+
+(ert-deftest appkit-markup-markdown-closing-fence-at-eof-is-not-content ()
+  (let* ((result
+          (appkit-markup-parse 'markdown "```text\nbody\n```"))
+         (block
+          (car
+           (appkit-markup-document-blocks
+            (appkit-markup-parse-result-document result)))))
+    (should (appkit-markup-preformatted-p block))
+    (should (equal (appkit-markup-preformatted-language block) "text"))
+    (should (equal (appkit-markup-preformatted-text block) "body"))))
+
+(ert-deftest appkit-markup-markdown-tree-sitter-grammars-are-required ()
+  (cl-letf (((symbol-function 'appkit-markup-markdown-ts-ready-p)
+             (lambda () nil)))
+    (should-error
+     (appkit-markup-parse 'markdown "body")
+     :type 'appkit-markup-codec-error)))
+
+(ert-deftest appkit-markup-markdown-tree-sitter-adapter-is-bounded ()
+  (let ((appkit-markup-markdown-ts-node-limit 1))
+    (should-error
+     (appkit-markup-parse 'markdown "# heading\n")
+     :type 'appkit-markup-codec-error)))
+
+(ert-deftest appkit-markup-markdown-tree-sitter-block-semantics ()
+  (let* ((result
+          (appkit-markup-parse
+           'markdown "Setext\n======\n\n    indented\n"))
+         (blocks
+          (appkit-markup-document-blocks
+           (appkit-markup-parse-result-document result))))
+    (should (appkit-markup-heading-p (nth 0 blocks)))
+    (should (appkit-markup-preformatted-p (nth 1 blocks)))
+    (should (equal (appkit-markup-preformatted-text (nth 1 blocks))
+                   "indented"))))
+
+(ert-deftest appkit-markup-markdown-unsupported-block-is-literal ()
+  (dotimes (_ 2)
+    (let* ((result (appkit-markup-parse 'markdown "---\n"))
+           (diagnostics (appkit-markup-parse-result-diagnostics result))
+           (diagnostic
+            (seq-find
+             (lambda (item)
+               (eq (appkit-markup-diagnostic-kind item)
+                   'unsupported-markdown-block))
+             diagnostics)))
+      (should (equal (appkit-markup-plain-text
+                      (appkit-markup-parse-result-document result))
+                     "---\n"))
+      (should diagnostic)
+      (should (= (appkit-markup-diagnostic-start diagnostic) 0))
+      (should (= (appkit-markup-diagnostic-end diagnostic) 4)))))
 
 (ert-deftest appkit-markup-plain-codec-reports-semantic-loss ()
   (let* ((document (appkit-markup-codec-test--document))
