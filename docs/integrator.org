@@ -282,6 +282,21 @@ stale completions inert.
 frees a slot.  Synchronous completion is delivered only after the
 starter returns its handle.
 
+* Evil adapters
+
+Keep ordinary mode maps as the Emacs-state contract.  Use
+~appkit-evil-map~ for client modal bindings: its Doom-style ~:n~, ~:m~, and
+combined state shorthands group string key descriptions under an explicit
+~:map~ without adding a Doom or General dependency.  The underlying installer
+defers until both Evil and the target map exist.
+
+Read-only surfaces may add ~appkit-evil-define-readonly-keys~.  Chat timelines
+can bind ~i~ to ~appkit-evil-chatbuf-enter-input~; it moves to the Appkit-owned
+composer and enters insert state in one command.  Timeline-only bindings must
+remain on the point-sensitive timeline minor map so they disappear in editable
+input.  Use ~appkit-evil-set-initial-states~ and
+~appkit-evil-normalize-buffers~ for client lifecycle setup.
+
 * Namespaces
 
 Use these public prefixes directly:

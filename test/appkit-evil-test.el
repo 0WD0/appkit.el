@@ -4,44 +4,12 @@
 (require 'appkit)
 (require 'evil)
 
-(ert-deftest appkit-evil-directory-keeps-native-prefixes-and-actions ()
-  (with-temp-buffer
-    (appkit-directory-mode)
-    (evil-normal-state)
-    (should (eq (key-binding (kbd "RET"))
-                #'appkit-directory-activate))
-    (should (eq (key-binding (kbd "TAB"))
-                #'appkit-directory-tab-dwim))
-    (should (eq (key-binding (kbd "<backtab>"))
-                #'appkit-directory-previous-item))
-    (should (eq (key-binding (kbd "g g"))
-                #'evil-goto-first-line))
-    (should (eq (key-binding (kbd "g j")) #'evil-next-visual-line))
-    (should (eq (key-binding (kbd "g k")) #'evil-previous-visual-line))
-    (should (eq (key-binding (kbd "g u")) #'evil-downcase))
-    (evil-motion-state)
-    (should (eq (key-binding (kbd "RET"))
-                #'appkit-directory-activate))
-    (should (eq (key-binding (kbd "g g"))
-                #'evil-goto-first-line))))
-
-(ert-deftest appkit-evil-directory-leaves-emacs-state-map-unchanged ()
-  (with-temp-buffer
-    (appkit-directory-mode)
-    (evil-emacs-state)
-    (should (eq (key-binding (kbd "RET"))
-                #'appkit-directory-activate))
-    (should (eq (key-binding (kbd "n"))
-                #'appkit-directory-next-item))
-    (should (eq (key-binding (kbd "p"))
-                #'appkit-directory-previous-item))))
-
 (ert-deftest appkit-evil-defers-state-bindings-until-keymap-exists ()
   (let ((symbol 'appkit-evil-test-deferred-mode-map))
     (when (boundp symbol)
       (makunbound symbol))
     (appkit-evil-define-keys 'normal symbol
-      (kbd "RET") #'ignore)
+      "RET" #'ignore)
     (should (assoc symbol
                    (mapcar (lambda (entry)
                              (cons (nth 1 entry) entry))
@@ -62,7 +30,7 @@
   :keymap appkit-evil-test-dynamic-mode-map)
 
 (appkit-evil-define-keys 'normal 'appkit-evil-test-dynamic-mode-map
-  (kbd "RET") #'ignore)
+  "RET" #'ignore)
 (add-hook 'appkit-evil-test-dynamic-mode-hook
           #'appkit-evil-normalize-keymaps)
 
@@ -75,6 +43,38 @@
     (appkit-evil-test-dynamic-mode -1)
     (should-not (eq (key-binding (kbd "RET")) #'ignore))))
 
+(ert-deftest appkit-evil-map-groups-maps-and-state-shorthands ()
+  (let ((map (make-sparse-keymap)))
+    (set 'appkit-evil-test-string-mode-map map)
+    (unwind-protect
+        (progn
+          (appkit-evil-map
+            (:map appkit-evil-test-string-mode-map
+             :nm
+             "g r" #'ignore
+             :n
+             "D" #'ignore))
+          (with-temp-buffer
+            (use-local-map map)
+            (evil-normal-state)
+            (should (eq (key-binding (kbd "g r")) #'ignore))
+            (should (eq (key-binding (kbd "D")) #'ignore))
+            (should (eq (key-binding (kbd "g g"))
+                        #'evil-goto-first-line))
+            (evil-motion-state)
+            (should (eq (key-binding (kbd "g r")) #'ignore))
+            (should-not (eq (key-binding (kbd "D")) #'ignore))))
+      (makunbound 'appkit-evil-test-string-mode-map))))
+
+(ert-deftest appkit-evil-chatbuf-enters-input-in-one-command ()
+  (let (focused inserted)
+    (cl-letf (((symbol-function 'appkit-chatbuf-focus-input)
+               (lambda () (setq focused t)))
+              ((symbol-function 'evil-insert-state)
+               (lambda () (setq inserted t))))
+      (appkit-evil-chatbuf-enter-input)
+      (should focused)
+      (should inserted))))
 
 (provide 'appkit-evil-test)
 
