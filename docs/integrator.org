@@ -1,14 +1,19 @@
 #+title: Appkit integrator guide
 #+options: toc:2 num:nil
 
-This guide is for authors of Appkit clients.  It is not an end-user
-manual.  Terms such as /compose session/ and /transfer control/ are
-defined in [[file:../CONTEXT.md][CONTEXT.md]].
+This guide is for authors of Appkit clients.  It is not an end-user manual.
+Detailed accepted designs live in [[file:compose.org][compose surfaces]] and
+[[file:markup.org][markup documents]].  Terms are defined at the surface that
+owns them rather than in a separate glossary.
 
 * Ownership
 
 Appkit owns lifecycle, update mechanics, and reusable presentation.
 Clients own application state, protocol adaptation, and branding.
+
+/Client semantics/ means protocol-specific meaning, validation, capability,
+persistence, transport, and error behavior.  Appkit owns reusable mechanisms;
+it does not turn client semantics into global policy.
 
 ** Appkit
 
@@ -38,7 +43,17 @@ Clients own application state, protocol adaptation, and branding.
 
 * Surfaces
 
+** Action spans
+
+An action span is one buffer region carrying a client-supplied zero-argument
+action.  ~appkit-ui-add-action~ makes it activatable by ~RET~ or primary click.
+Help text describes the action itself; Appkit does not infer a protocol target
+or install a client keymap.
+
 ** Compose primitives
+
+The exact source-backed contract is documented in
+[[file:compose.org][compose surfaces]].
 
 ~appkit-compose-setup~ attaches protocol-neutral editing primitives to the
 current buffer without changing its major mode or document model.  The client
@@ -77,6 +92,24 @@ draft with ~appkit-chat-compose-set-items~ and read it with
 variable.  Status fields use the generic ~appkit-compose-*~ presentation
 functions.
 
+Part bodies are plain strings in Appkit 0.2.18; the chat-compose item merge
+removes text properties.  Use the property-preserving ~appkit-chatbuf~ input
+state directly when structured objects must survive capture.
+
+** Markup documents
+
+[[file:markup.org][Markup documents]] record the accepted semantic model, codec
+registry, structured-object fencing, source editing, preview, and plain-text
+export design for formatted composers.  Appkit 0.2.18 does not yet provide
+~appkit-markup-*~ modules or public symbols; integrators must not call the
+illustrative target API until it is implemented.
+
+The existing extension points are property-preserving chatbuf input and custom
+~appkit-compose~ snapshots.  Structured provider content will use a client
+adapter; raw markup source will use an explicitly selected codec.  Do not print
+a structured provider value to text and parse it again, and do not feed
+arbitrary protocol text to a generic Markdown codec.
+
 ** Transfer control
 
 A timeline transfer control presents one upload or download.  The
@@ -94,6 +127,12 @@ keeps generated content read-only even when the composer is hidden.
 Set ~appkit-chatbuf-input-sync-function~ to synchronize
 protocol-specific draft state.  Do not install a second after-change
 controller.
+
+Canonical chatbuf input and ~appkit-chatbuf-input-string~ preserve text
+properties.  Structured input objects carry opaque payload, unique occurrence
+identity, original visible text, and boundary sentinels.  Atomic deletion and
+repair operate on complete occurrences.  Shared input history currently skips
+object-bearing entries.
 
 Construct compact content with
 ~appkit-ui-one-line-preview-create~.  Its optional propertized prefix
@@ -113,10 +152,11 @@ acquisition, labels, identity faces, and resource invalidation.
 
 ** Discussion
 
-Discussion rows accept optional pre-heading context, nesting depth,
-and a prefix connector for linear ancestor chains.  Clients supply
-the context text; Appkit does not interpret it as a Renote, reply, or
-quote.
+/Discussion depth/ is visual reply nesting under a parent.  A /discussion
+connector/ is a prefix that continues or ends a linear ancestor chain without
+changing that depth.  Discussion rows accept both plus optional pre-heading
+context.  Clients supply the context text; Appkit does not interpret it as a
+Renote, reply, quote, or protocol thread.
 
 ** History
 
@@ -131,6 +171,20 @@ Callers adapt backend objects into canonical resource descriptors and
 explicit preview metadata.  Appkit owns HTTPS-only atomic acquisition,
 byte-level image cache finalization, lifecycle-bound open transfers,
 and protocol-restricted preview and player processes.
+
+A media attachment view is one item's preview, label, description, transfer
+state, and actions.  It is presentation, not the readable or displayable media
+resource and not a client attachment model.
+
+Finite local audio playback uses ~appkit-media-player-start-file~.  One
+~appkit-media-player-session~ owns its process, progress timer, pause/resume
+position, and optional Appkit owner handle.  Its lifecycle follows Telega's
+ffplay model: parse player progress, pause by terminating the current process,
+and resume with a fresh process at the retained timestamp.  MPV sessions
+override inherited ~idle~ and ~keep-open~ settings so terminal cleanup remains
+authoritative.  Clients provide local-file acquisition, duration metadata,
+resource invalidation callbacks, and protocol identity; they do not own player
+processes or sentinels.
 
 ** Completion
 
