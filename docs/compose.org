@@ -4,7 +4,7 @@
 Appkit separates protocol-neutral editing authority from chat-specific
 multi-part geometry and source-markup interpretation.  The layers are
 implemented by ~appkit-compose.el~, ~appkit-chat-compose.el~, and
-~appkit-markup-compose.el~ in Appkit 0.2.21.
+~appkit-markup-compose.el~ in Appkit 0.3.0.
 
 * Ownership
 

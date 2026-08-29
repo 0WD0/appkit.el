@@ -273,7 +273,7 @@ source-edit function.  CAPABILITIES is a duplicate-free subset of
         (token-cursor #xE000)
         (count 0)
         pieces
-        (mapping '(0))
+        (mapping (list 0))
         semantic
         side-channels)
     (cl-labels

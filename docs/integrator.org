@@ -92,7 +92,7 @@ draft with ~appkit-chat-compose-set-items~ and read it with
 variable.  Status fields use the generic ~appkit-compose-*~ presentation
 functions.
 
-Part bodies remain plain strings in Appkit 0.2.21; the chat-compose item merge
+Part bodies remain plain strings in Appkit 0.3.0; the chat-compose item merge
 removes text properties.  Use the property-preserving ~appkit-chatbuf~ input
 state directly when structured objects must survive capture.
 
@@ -102,7 +102,7 @@ state directly when structured objects must survive capture.
 codec registry, structured-object fencing, source editing, preview, and
 plain-text export contracts.
 
-Appkit 0.2.21 ships ~appkit-markup~, ~appkit-markup-ui~,
+Appkit 0.3.0 ships ~appkit-markup~, ~appkit-markup-ui~,
 ~appkit-markup-codec~, ~appkit-markup-codecs~, and
 ~appkit-markup-compose~.  Direct provider adapters still construct Documents
 without printing and reparsing provider data.
@@ -128,9 +128,11 @@ channels.  Use that same capture for
 losses before transport; never silently flatten unsupported semantics.
 
 ~org~ uses built-in ~org-element~ without enabling Org mode or hooks.
-~markdown~ is a deterministic local compose grammar.  ~plain~ treats syntax
-markers literally.  Universal prefixes select later configured codecs in the
-same order as Telega.  One active-codec change calls ~appkit-compose-touch~.
+~markdown~ directly uses the pinned GNU Emacs block and inline Tree-sitter
+grammars without enabling ~markdown-ts-mode~ or installing grammars during
+parse.  ~plain~ treats syntax markers literally.  Universal prefixes select
+later configured codecs in the same order as Telega.  One active-codec change
+calls ~appkit-compose-touch~.
 
 For incoming presentation, construct a normalized Document and call
 ~appkit-markup-ui-insert-document~.  Use ~:interactive-p nil~ for previews;
