@@ -6,7 +6,7 @@
 ;; Maintainer: 0WD0 <me@0wd0.com>
 ;; Keywords: lisp, extensions
 ;; URL: https://github.com/emacs-im/appkit.el
-;; Version: 0.2.20
+;; Version: 0.2.21
 ;; Package-Requires: ((emacs "27.1") (plz "0.8"))
 
 ;;; Commentary:
@@ -37,6 +37,9 @@
 (require 'appkit-ui)
 (require 'appkit-markup)
 (require 'appkit-markup-ui)
+(require 'appkit-markup-codec)
+(require 'appkit-markup-codecs)
+(require 'appkit-markup-compose)
 (require 'appkit-view)
 (require 'appkit-mode-line)
 (require 'appkit-chat-avatar)

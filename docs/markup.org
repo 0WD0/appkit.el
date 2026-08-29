@@ -2,31 +2,35 @@
 #+options: toc:3 num:nil
 
 This document defines Appkit's protocol-neutral markup value, codec boundary,
-and compose interaction.  The first client integrations are Slackit and Disco.
-Chirp rich text and Telega migration are outside the first integration scope.
+and compose interaction.  Zulip is the first native Document renderer and the
+first source-backed compose integration.  Slackit, Disco, Chirp, and Telega
+migrations remain later client work.
 
 * Current source status
 
-Appkit 0.2.20 contains the semantic document core and native UI insertion
-boundary.  It provides immutable-by-contract block/inline values,
-normalization, validation, semantic equality, plain-text export, and
-transactional insertion.  Codec registration, source parsing/printing,
-diagnostics, semantic-loss records, and structured-object fencing remain target
-design rather than callable API.
+Appkit 0.2.21 contains the semantic document core, native UI insertion,
+property-preserving codec boundary, and source-backed compose workflow.  It
+provides:
 
-The current source also provides the lower-level compose extension points:
+- read-only-slot block/inline values, normalization, validation, equality, and
+  semantic plain-text export;
+- transactional native insertion with callback mutation fencing;
+- immutable parse/print/diagnostic/loss result values and a named registry;
+- built-in ~plain~, ~org~, and ~markdown~ codecs;
+- structured-object semantic/side-channel/reject classification with
+  call-local placeholder integrity and original-coordinate diagnostics;
+- Telega-style per-command codec selection, active-codec state, codec-neutral
+  source edits, pure preview, and generation-qualified output snapshots.
 
-- ~appkit-compose-setup~ accepts a client snapshot function and semantic source
-  bounds without inspecting the captured value;
-- ~appkit-chatbuf-input-state~ and live input access preserve text properties;
-- structured input objects have unique occurrence spans, visible-text
-  sentinels, atomic deletion, and repair;
-- equal adjacent opaque payloads remain distinct occurrences.
+The ~org~ parser explicitly uses Emacs's built-in ~org~ and ~org-element~
+semantics in a temporary buffer.  It never enables ~org-mode~, Font Lock,
+Babel, language modes, or user hooks.  ~markdown~ is Appkit's local
+deterministic compose parser; it performs no subprocess or package work.
 
-Two compose limitations remain explicit.  Shared chatbuf history skips
-object-bearing entries, and ~appkit-chat-compose~ strips text properties when it
-merges a part body.  Neither mixed-object history nor property-preserving
-multi-part chat compose is implied by the document/UI implementation.
+Two chatbuf limitations remain explicit.  Shared history skips object-bearing
+entries, and ~appkit-chat-compose~ strips text properties when it merges a part
+body.  Neither mixed-object history nor property-preserving multi-part chat
+compose is implied by this release.
 
 * Ownership
 
@@ -94,8 +98,8 @@ A document contains an ordered list of these blocks:
 - *preformatted*: exact text and optional opaque language name;
 - *object block*: opaque client value and ordered fallback blocks.
 
-Heading is part of the shared model because the chat-Markdown codec and Discord
-both carry heading semantics.  A provider without headings degrades it through
+Heading is part of the shared model because Markdown and Discord both carry
+heading semantics.  A provider without headings degrades it through
 its encoder and reports semantic loss.
 
 ** Inlines
@@ -201,14 +205,14 @@ A codec registration contains:
 - optional source-editing operations;
 - a human-readable label.
 
-The target public API is shaped as follows:
+The public registry and operation API is:
 
 #+begin_src emacs-lisp
 (appkit-markup-register-codec
- 'org
- :parse #'appkit-markup-org-parse
- :print #'appkit-markup-org-print
- :edit #'appkit-markup-org-edit
+ 'provider-source
+ :parse #'client-parse
+ :print #'client-print
+ :edit #'client-edit
  :capabilities '(heading bold italic underline strike code link quote list
                  preformatted))
 
@@ -216,27 +220,26 @@ The target public API is shaped as follows:
                      :context context
                      :object-classifier classifier)
 
-(appkit-markup-print 'org document
+(appkit-markup-print 'markdown document
                      :context context
                      :object-printer object-printer)
 #+end_src
 
-The implemented registry will provide these Appkit codecs:
+The built-in codecs are:
 
 - ~plain~: literal text with no invented formatting syntax;
-- ~org~: the safe chat subset of paragraphs, headings, emphasis, underline,
-  strike, inline code, described links, quotes, lists, and ~#+begin_src~ code
-  blocks;
-- ~chat-markdown~: the documented chat subset of paragraphs, headings, bold,
-  italic, strike, inline and fenced code, described links, quotes, and lists.
+- ~org~: real ~org-element~ parsing for paragraphs, headings, emphasis,
+  underline, strike, inline code, described links, quotes, lists, and
+  ~#+begin_src~ blocks;
+- ~markdown~: paragraphs, headings, bold, italic, strike, inline and fenced
+  code, described links, quotes, and nested lists.
 
-~chat-markdown~ has no underline marker.  Org uses ~_text_~ for underline.  A
-codec is not named CommonMark unless it satisfies the promised CommonMark
-conformance contract.
+Markdown has no underline marker.  Converting an Org underline to Markdown
+therefore returns a semantic-loss record instead of silently changing it.
+Provider-exact grammars and wire encoders remain client-owned.
 
-Slackit registers ~slack-mrkdwn~ for legacy Slack source.  Disco registers
-~discord~ for exact Discord syntax.  Neither provider grammar becomes an
-Appkit built-in.
+Slackit may register ~slack-mrkdwn~ and Disco may register ~discord~ during
+their migrations.  Neither provider grammar becomes an Appkit built-in.
 
 ** Parse result
 
@@ -292,36 +295,38 @@ The client classifier returns one disposition:
 - *reject* plus a diagnostic kind: stop rather than silently flatten or delete
   the occurrence.
 
-The default is semantic.  Slackit user and channel objects are semantic.  Disco
-attachment objects are side-channel values; Disco identity objects are
-semantic.
+The default is semantic.  Zulip mention objects are semantic and print through
+Zulip's exact-ID object printer.  Future clients may classify attachments as
+side-channel values independently of semantic identity objects.
 
 A codec sees a placeholder as one indivisible literal atom.  Missing,
 duplicated, split, or reordered placeholders invalidate its result.  A
 placeholder exists only during one synchronous parse call and never enters a
 document, buffer, registry, cache key, diagnostic, or log.
 
-Non-chatbuf clients may supply explicit object ranges under the same contract.
-Appkit assigns no provider meaning to semantic or side-channel values.
+The current scanner consumes Appkit chatbuf occurrence spans.  Explicit
+non-chatbuf object-range input remains future API.  Appkit assigns no provider
+meaning to semantic or side-channel values.
 
 * Source editing
 
 Formatted composition remains ordinary editable source.  The markup subsystem
-will expose codec-neutral commands for:
+exposes codec-neutral operations for:
 
 - bold, italic, underline, strike, and inline code;
-- described links;
-- ordered and unordered list items;
+- described links and headings;
+- quotes, ordered and unordered list items;
 - code blocks with optional explicit language.
 
 The active codec owns the concrete edit.  It receives immutable source bounds
-and operation data, then returns replacement source and the desired point or
-region.  It may wrap a selection or insert balanced markers.  It does not parse,
-perform I/O, mutate a document, or cross a structured object boundary.
+and operation data, then returns property-preserving replacement source and the
+desired point or region.  One application is one combined semantic generation
+change.  It never parses, performs I/O, mutates a Document, or crosses a
+structured object boundary.
 
-~plain~ reports unsupported formatting.  Org emits Org syntax.
-~chat-markdown~ reports underline as unsupported instead of inventing a marker.
-Client commands and Transients invoke these operations but remain client-owned.
+~plain~ rejects formatting.  Org emits canonical Org syntax.  Markdown rejects
+underline rather than inventing a marker.  Clients own key bindings and menus;
+Zulip exposes one Telega-style formatting dispatcher.
 
 * Selection, editing, and preview
 
@@ -424,7 +429,7 @@ only missing ~text~ or ~blocks~ from the captured snapshot.  It does not replace
 a richer server response with local fallback.  Existing operation and message
 revision fencing remains unchanged.
 
-Slackit's initial codec order is ~plain~, ~org~, then ~chat-markdown~ for
+Slackit's proposed initial codec order is ~plain~, ~org~, then ~markdown~ for
 backward compatibility.  Users may reorder it or select another active codec.
 Editing formatted content chooses the first configured lossless codec.
 
@@ -455,7 +460,7 @@ to shared nodes and provider syntax to objects:
 
 The first read-path cutover preserves current list presentation.  Discord list
 markers remain literal text and ~discord~ does not claim list semantic
-round-trips.  Org and chat-Markdown documents may still encode to canonical
+round-trips.  Org and Markdown documents may still encode to canonical
 Discord list syntax on send.  A visible Disco list-rendering change is separate.
 
 Disco's renderer retains link activation, spoiler reveal/mask, headings,
@@ -505,15 +510,16 @@ Markup operations are local deterministic transformations:
 
 - no codec performs network, file, subprocess, package-installation, or
   transport work;
-- Org parsing never evaluates Babel, expands through user code, loads a
-  language, or runs major-mode hooks;
-- parsers do not run Font Lock, language detection, Tree-sitter installation,
-  LSP, or user hooks;
+- Org parsing uses built-in ~org-element~ but never evaluates Babel, expands
+  through user code, enables ~org-mode~, loads a language, or runs hooks;
+- Markdown parsing does not run Font Lock, Tree-sitter, LSP, or an external
+  converter;
 - language names remain opaque metadata;
-- parsing is bounded by source length, nesting depth, and node count;
+- source and structured-object occurrence counts are bounded before provider
+  transport;
 - malformed input becomes literal text without retry loops;
 - registries contain functions and capability names, never source content;
-- Appkit owns no global source or document cache;
+- Appkit owns no global source or Document cache;
 - source text, URLs, opaque values, contact data, and code bodies never appear
   in diagnostics, cache keys, buffer names, view IDs, or test failures;
 - parsing, printing, editing, normalization, preview, and export do not mutate
@@ -526,30 +532,25 @@ presentation decision after markup parsing is stable.
 
 * Integration sequence
 
-1. Implement document values, normalization, validation, semantic equality,
-   plain export, and transactional native insertion.
-2. Adapt Zulip's authoritative server-rendered HTML directly to Documents and
-   cut its timeline, summary, copy, identity, navigation, time, spoiler, and
-   media fallback paths over to native insertion.
-3. Implement codec result values, the registry, ~plain~, and structured-object
-   fencing with original-source coordinate mapping and parser-visible
-   side-channel barriers.
-4. Implement Org and chat-Markdown with bounded semantic round-trip and
-   malformed-input tests.
-5. Implement source edits, selection, lossless edit-codec choice, and preview
-   without changing client keymaps.
-6. Register ~discord~ and cut over Disco's read path while retaining its
-   interaction and semantic-copy contracts.
-7. Add Slackit's direct rich-text adapter and document renderer; remove code
-   descriptor matching after language, identity, code, and fallback contracts
-   pass through the new path.
-8. Cut over Slackit and Disco compose/send/edit to immutable captured documents
-   and provider-exact wire snapshots.
-9. Delete obsolete client parsers, plaintext cache keys, descriptor matching,
-   duplicate edit paths, and pass-through helpers in the same cutovers.  There
-   are no aliases or parallel legacy paths.
-10. Update the integrator guide and client Appkit dependency floors with each
-    released public API.
+Completed in Appkit 0.2.21 and emacs-zulip:
+
+1. Document values, normalization, equality, plain export, and transactional
+   native insertion.
+2. Zulip server HTML direct adaptation and native timeline rendering.
+3. Codec results, registry, ~plain~, structured-object fencing, side channels,
+   and coordinate mapping.
+4. Real ~org-element~ parsing, local Markdown parsing, canonical printers, and
+   semantic round-trip tests.
+5. Source edits, active/prefix codec selection, immutable capture, pure
+   preview, semantic-loss rejection, and Zulip Markdown output.
+6. Zulip compose/send/edit cutover, including exact mention object printing and
+   restoration of the draft's active codec after server-message editing.
+
+Remaining client migrations:
+
+7. Register Disco's provider-exact codec and cut over its read/compose path.
+8. Add Slackit's direct rich-text adapter and provider-exact output snapshot.
+9. Migrate their caches and delete obsolete parsers in the same clean cutovers.
 
 * Verification contracts
 

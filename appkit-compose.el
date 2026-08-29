@@ -138,6 +138,11 @@
         (error "Appkit compose source bounds are invalid: %S" bounds))
       bounds)))
 
+(defun appkit-compose-source-bounds ()
+  "Return current immutable semantic source bounds, or nil."
+  (when-let* ((bounds (appkit-compose--source-bounds)))
+    (cons (car bounds) (cdr bounds))))
+
 (defun appkit-compose--change-overlaps-source-p (beg end old-length bounds)
   "Return non-nil when a change at BEG..END touches source BOUNDS.
 
