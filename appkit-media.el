@@ -9,7 +9,7 @@
 
 ;;; Commentary:
 
-;; Aggregates protocol-neutral media card, image, resource, and video
+;; Aggregates protocol-neutral media card, image, resource, playback, and video
 ;; primitives.  Applications remain responsible for adapting backend objects
 ;; and for owning transfer/cache state visible in their user interfaces.
 
@@ -18,6 +18,7 @@
 (require 'appkit-media-card)
 (require 'appkit-media-image)
 (require 'appkit-media-resource)
+(require 'appkit-media-player)
 (require 'appkit-media-video)
 
 (provide 'appkit-media)
