@@ -62,24 +62,25 @@
 (ert-deftest appkit-discussion-context-precedes-avatar-heading ()
   "Context should occupy its own prefixed line above the avatar heading."
   (with-temp-buffer
-    (cl-letf (((symbol-function 'appkit-chat-avatar-prefixes)
-               (lambda (&rest _arguments)
-                 '(:header "H " :first-body "B " :rest-body "R "))))
-      (appkit-discussion-insert-entry
-       (appkit-discussion-entry-create
-        :key "renote"
-        :parent-key "root"
-        :depth 1
-        :connector 'end
-        :context-inserter
-        (lambda () (insert (propertize "renoted by Alice" 'user-id "alice")))
-        :context-face 'shadow
-        :heading "Original author"
-        :body-inserter
-        (lambda (prefix properties)
-          (appkit-ui-insert-prefixed-lines
-           prefix "body" :properties properties)))
-       :indent-width 3))
+    (let ((appkit-discussion-connector-style 'text))
+      (cl-letf (((symbol-function 'appkit-chat-avatar-prefixes)
+                 (lambda (&rest _arguments)
+                   '(:header "H " :first-body "B " :rest-body "R "))))
+        (appkit-discussion-insert-entry
+         (appkit-discussion-entry-create
+          :key "renote"
+          :parent-key "root"
+          :depth 1
+          :connector 'end
+          :context-inserter
+          (lambda () (insert (propertize "renoted by Alice" 'user-id "alice")))
+          :context-face 'shadow
+          :heading "Original author"
+          :body-inserter
+          (lambda (prefix properties)
+            (appkit-ui-insert-prefixed-lines
+             prefix "body" :properties properties)))
+         :indent-width 3)))
     (should (equal (buffer-string)
                    "renoted by Alice\nOriginal author\nbody\n\n"))
     (goto-char (point-min))
@@ -155,36 +156,133 @@
      :indent-width 3)
     (goto-char (point-min))
     (should (equal "Plain" (buffer-substring-no-properties
-                             (line-beginning-position)
-                             (line-end-position))))
+                            (line-beginning-position)
+                            (line-end-position))))
     (should (equal "   " (get-text-property (point) 'line-prefix)))
     (forward-line 1)
     (should (equal "body" (buffer-substring-no-properties
-                            (line-beginning-position)
-                            (line-end-position))))
+                           (line-beginning-position)
+                           (line-end-position))))
     (should (equal "   " (get-text-property (point) 'line-prefix)))))
 
 (ert-deftest appkit-discussion-entry-draws-a-chain-connector-in-the-prefix ()
   "A continue connector should occupy the prefix instead of indenting."
   (with-temp-buffer
-    (appkit-discussion-insert-entry
-     (appkit-discussion-entry-create
-      :key "ancestor"
-      :parent-key "root"
-      :depth 0
-      :connector 'continue
-      :heading "Ancestor"
-      :body-inserter
-      (lambda (prefix properties)
-        (appkit-ui-insert-prefixed-lines
-         prefix "body" :properties properties)))
-     :avatar-p nil)
+    (let ((appkit-discussion-connector-style 'text))
+      (appkit-discussion-insert-entry
+       (appkit-discussion-entry-create
+        :key "ancestor"
+        :parent-key "root"
+        :depth 0
+        :connector 'continue
+        :heading "Ancestor"
+        :body-inserter
+        (lambda (prefix properties)
+          (appkit-ui-insert-prefixed-lines
+           prefix "body" :properties properties)))
+       :avatar-p nil))
     (goto-char (point-min))
     (should (string-prefix-p "│ " (get-text-property (point) 'line-prefix)))
     (forward-line 1)
     (should (string-prefix-p "│ " (get-text-property (point) 'line-prefix)))
     (forward-line 1)
     (should (string-prefix-p "│ " (get-text-property (point) 'line-prefix)))))
+
+(ert-deftest appkit-discussion-fringe-connector-reserves-no-text-column ()
+  "A graphical fringe connector should not shift discussion content."
+  (with-temp-buffer
+    (let ((appkit-discussion-connector-style 'fringe))
+      (cl-letf (((symbol-function 'display-graphic-p)
+                 (lambda (&optional _display) t))
+                ((symbol-function 'window-fringes)
+                 (lambda (&optional _window) '(4 0 nil nil))))
+        (appkit-discussion-insert-entry
+         (appkit-discussion-entry-create
+          :key "ancestor"
+          :connector 'continue
+          :heading "Ancestor"
+          :body-inserter
+          (lambda (prefix properties)
+            (appkit-ui-insert-prefixed-lines
+             prefix "body" :properties properties)))
+         :avatar-p nil
+         :separate-p nil)))
+    (let* ((prefix (get-text-property (point-min) 'line-prefix))
+           (display (get-text-property 0 'display prefix))
+           (spec (car display)))
+      (should (= 1 (length prefix)))
+      (should (= 0 (appkit-discussion--prefix-width prefix)))
+      (should (get-text-property
+               0 'appkit-discussion-fringe-marker prefix))
+      (should (eq 'left-fringe (car spec)))
+      (should (fringe-bitmap-p (nth 1 spec)))
+      (should (eq 'appkit-discussion--connector-4-2-outer
+                  (nth 1 spec)))
+      (should (eq 'appkit-discussion-fringe-connector (nth 2 spec))))))
+
+(ert-deftest appkit-discussion-fringe-connector-allows-custom-geometry ()
+  "Generated geometry and a caller-defined bitmap should both be usable."
+  (let ((appkit-discussion--fringe-spec-cache
+         (make-hash-table :test #'eq))
+        (appkit-discussion-fringe-bar-width 3)
+        (appkit-discussion-fringe-bar-position 'inner)
+        (appkit-discussion-fringe-bitmap nil))
+    (let* ((marker (appkit-discussion--fringe-connector 8))
+           (spec (car (get-text-property 0 'display marker))))
+      (should (eq 'appkit-discussion--connector-8-3-inner
+                  (nth 1 spec)))
+      (should (eq 'appkit-discussion-fringe-connector (nth 2 spec)))))
+  (define-fringe-bitmap
+    'appkit-discussion-test-fringe-bitmap
+    [#b10101010] 1 8 '(top t))
+  (let ((appkit-discussion--fringe-spec-cache
+         (make-hash-table :test #'eq))
+        (appkit-discussion-fringe-bar-width 0)
+        (appkit-discussion-fringe-bar-position 'invalid)
+        (appkit-discussion-fringe-bitmap
+         'appkit-discussion-test-fringe-bitmap))
+    (let* ((marker (appkit-discussion--fringe-connector 8))
+           (spec (car (get-text-property 0 'display marker))))
+      (should (eq 'appkit-discussion-test-fringe-bitmap
+                  (nth 1 spec))))))
+
+(ert-deftest appkit-discussion-fringe-connector-validates-generated-geometry ()
+  (let ((appkit-discussion-fringe-bitmap nil)
+        (appkit-discussion-fringe-bar-width 0))
+    (should-error (appkit-discussion--fringe-connector 8)
+                  :type 'error))
+  (let ((appkit-discussion-fringe-bitmap nil)
+        (appkit-discussion-fringe-bar-width 2)
+        (appkit-discussion-fringe-bar-position 'invalid))
+    (should-error (appkit-discussion--fringe-connector 8)
+                  :type 'error))
+  (let ((appkit-discussion-fringe-bitmap
+         'appkit-discussion-undefined-fringe-bitmap))
+    (should-error (appkit-discussion--fringe-connector 8)
+                  :type 'error)))
+
+(ert-deftest appkit-discussion-connector-style-selects-visible-fallbacks ()
+  "`fringe', `text', and `none' should have explicit geometry."
+  (let ((appkit-discussion-connector-style 'text))
+    (should (eq 'text (appkit-discussion--connector-presentation)))
+    (should
+     (equal "│ "
+            (substring-no-properties
+             (appkit-discussion--connector-column
+              'continue 'header 'text))))
+    (should
+     (equal "  "
+            (appkit-discussion--connector-column 'end 'rest-body 'text))))
+  (let ((appkit-discussion-connector-style 'none))
+    (should (eq 'none (appkit-discussion--connector-presentation)))
+    (should
+     (equal ""
+            (appkit-discussion--connector-column
+             'continue 'header 'none))))
+  (let ((appkit-discussion-connector-style 'fringe))
+    (cl-letf (((symbol-function 'display-graphic-p)
+               (lambda (&optional _display) nil)))
+      (should (eq 'text (appkit-discussion--connector-presentation))))))
 
 (ert-deftest appkit-discussion-entry-requires-parent-for-nesting ()
   (with-temp-buffer

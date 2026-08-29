@@ -153,10 +153,18 @@ acquisition, labels, identity faces, and resource invalidation.
 ** Discussion
 
 /Discussion depth/ is visual reply nesting under a parent.  A /discussion
-connector/ is a prefix that continues or ends a linear ancestor chain without
-changing that depth.  Discussion rows accept both plus optional pre-heading
-context.  Clients supply the context text; Appkit does not interpret it as a
-Renote, reply, quote, or protocol thread.
+connector/ continues or ends a linear ancestor chain without changing that
+depth.  Discussion rows accept both plus optional pre-heading context.  Clients
+supply the context text; Appkit does not interpret it as a Renote, reply, quote,
+or protocol thread.
+
+~appkit-discussion-connector-style~ selects ~fringe~ (the graphical default
+with a terminal text fallback), ~text~, or ~none~.  Customize
+~appkit-discussion-fringe-connector~ for foreground/background color and
+~appkit-discussion-fringe-bar-width~ or
+~appkit-discussion-fringe-bar-position~ for generated geometry.  Advanced
+configurations may register a bitmap with ~define-fringe-bitmap~ and assign its
+symbol to ~appkit-discussion-fringe-bitmap~.
 
 ** History
 
