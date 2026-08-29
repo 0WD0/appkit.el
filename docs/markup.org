@@ -1,0 +1,560 @@
+#+title: Appkit markup documents
+#+options: toc:3 num:nil
+
+This document defines Appkit's protocol-neutral markup value, codec boundary,
+and compose interaction.  The first client integrations are Slackit and Disco.
+Chirp rich text and Telega migration are outside the first integration scope.
+
+* Current source status
+
+Appkit 0.2.18 does not contain an ~appkit-markup~ module, registry, document
+structs, codecs, or public ~appkit-markup-*~ symbols.  The API forms below are
+the accepted target design, not callable current API.  ~appkit.el~ must not
+require markup modules until those modules and their tests are implemented.
+
+The current source already provides the required lower-level extension points:
+
+- ~appkit-compose-setup~ accepts a client snapshot function and semantic source
+  bounds without inspecting the captured value;
+- ~appkit-chatbuf-input-state~ and live input access preserve text properties;
+- structured input objects have unique occurrence spans, visible-text
+  sentinels, atomic deletion, and repair;
+- equal adjacent opaque payloads remain distinct occurrences.
+
+Two current limitations are explicit.  Shared chatbuf history skips
+object-bearing entries, and ~appkit-chat-compose~ strips text properties when it
+merges a part body.  The first Slackit and Disco integrations use their existing
+property-preserving ~appkit-chatbuf-mode~ composers.  Neither mixed-object
+history nor property-preserving multi-part chat compose is implied by this
+design.
+
+* Ownership
+
+Appkit owns the transient semantic document and reusable source operations:
+
+- immutable block and inline values;
+- construction, validation, normalization, and semantic equality;
+- named parser/printer codecs;
+- structured input-object protection and side-channel classification;
+- codec selection, source editing, preview, and plain-text export;
+- position-only diagnostics and semantic-loss records.
+
+Clients own domain and protocol behavior:
+
+- editable source, configured codec order, and active codec;
+- drafts, history, persistence, revisions, autosave, and close policy;
+- provider data to markup-document adaptation;
+- provider-exact codecs and wire encoders;
+- identity resolution, URL safety, mention policy, and payload validation;
+- timeline faces, actions, spoiler state, and code-language mode selection;
+- transport, retry policy, reconciliation, and accepted/rejected/unknown
+  outcomes;
+- key bindings and Transient menus.
+
+A markup document is a transient interchange or derived presentation value.  It
+is not a draft, canonical provider message, or transport snapshot.  A client may
+cache it only in an app-owned bounded cache keyed by a revision-qualified,
+secret-free identity.  The provider object remains canonical.
+
+Markup keeps the compose ownership defined in
+[[file:compose.org][compose surfaces]].  ~appkit-compose~ still owns semantic
+generation, immutable capture, and one view-local effect owner.  Parsing never
+means send, acceptance, retry, reconciliation, or persistence.
+
+* Entry paths
+
+Structured provider values and source markup use different entry paths:
+
+#+begin_example
+structured provider value -> client direct adapter -> markup document
+editable/raw markup text  -> registered codec       -> markup document
+#+end_example
+
+Slack ~rich_text~ is already structured and uses a direct Slackit adapter.  It
+must not be printed to ~mrkdwn~ and reparsed.  Discord message content is a
+provider markup string and uses a Disco-registered ~discord~ codec.  A client
+must explicitly choose a codec before Appkit interprets ordinary protocol text.
+
+* Document model
+
+The public model is a closed family of ~cl-defstruct~ values.  Public
+constructors return owned values; Appkit exposes no mutator API.  Callers must
+not use ~setf~ on a captured document.
+
+** Blocks
+
+A document contains an ordered list of these blocks:
+
+- *paragraph*: ordered inline children;
+- *heading*: level 1 through 6 and ordered inline children;
+- *quote*: ordered child blocks;
+- *list*: ~ordered~ or ~unordered~ style, non-negative indentation, optional
+  positive starting number, and ordered list items;
+- *list item*: ordered child blocks;
+- *preformatted*: exact text and optional opaque language name;
+- *object block*: opaque client value and ordered fallback blocks.
+
+Heading is part of the shared model because the chat-Markdown codec and Discord
+both carry heading semantics.  A provider without headings degrades it through
+its encoder and reports semantic loss.
+
+** Inlines
+
+A paragraph, heading, or other inline container contains:
+
+- *text*: exact text and normalized styles;
+- *link*: URL and ordered inline label children;
+- *object*: opaque client value, ordered fallback inline children, and
+  normalized styles;
+- *line break*: explicit break within the containing block.
+
+The style set is:
+
+- ~bold~
+- ~italic~
+- ~underline~
+- ~strike~
+- ~code~
+
+A link may contain adjacent label runs with different styles.  A provider that
+allows only one style set per link splits it into adjacent links with the same
+URL.  Inline-code and preformatted contents are literal; codecs do not parse
+markup, emoji, mentions, or links inside them.
+
+** Provider extensions
+
+Provider-only structures use object nodes rather than expanding the shared type
+family:
+
+- Slack user and channel mentions are inline objects with exact IDs;
+- Discord spoilers are inline objects whose fallback children retain nested
+  visible formatting;
+- Discord subtitles are object blocks with paragraph fallback;
+- Discord roles, commands, custom emoji, timestamps, and navigation tokens are
+  inline objects;
+- unsupported Slack Block Kit content may be an object block with a safe
+  semantic fallback.
+
+Generic preview, printing, and export traverse only fallback children.  Only the
+owning client inspects an opaque value.  Generic validation and errors never
+print it.
+
+** Normalization
+
+Normalized documents satisfy these invariants:
+
+- every child sequence is a proper list and valid at its structural depth;
+- empty text nodes are removed;
+- adjacent text nodes with equal styles are merged;
+- style order is canonical and duplicate-free;
+- heading levels are 1 through 6;
+- list indentation is non-negative and a present start is positive;
+- a language is an opaque non-empty string and is never inferred from code;
+- URLs remain strings, but Appkit does not certify them as safe or
+  provider-valid;
+- opaque values are compared only through occurrence identity or a
+  client-supplied equality operation;
+- diagnostics and equality failures contain no text, URL, language, opaque
+  value, or code body.
+
+Parse diagnostics use Emacs character positions.  Provider byte, code-point, or
+UTF-16 coordinates are client adapter concerns.
+
+* Codec contract
+
+A codec registration contains:
+
+- a parser from property-preserving source to a parse result;
+- a printer from a validated document to a print result;
+- declared semantic capabilities;
+- optional source-editing operations;
+- a human-readable label.
+
+The target public API is shaped as follows:
+
+#+begin_src emacs-lisp
+(appkit-markup-register-codec
+ 'org
+ :parse #'appkit-markup-org-parse
+ :print #'appkit-markup-org-print
+ :edit #'appkit-markup-org-edit
+ :capabilities '(heading bold italic underline strike code link quote list
+                 preformatted))
+
+(appkit-markup-parse 'org source
+                     :context context
+                     :object-classifier classifier)
+
+(appkit-markup-print 'org document
+                     :context context
+                     :object-printer object-printer)
+#+end_src
+
+The implemented registry will provide these Appkit codecs:
+
+- ~plain~: literal text with no invented formatting syntax;
+- ~org~: the safe chat subset of paragraphs, headings, emphasis, underline,
+  strike, inline code, described links, quotes, lists, and ~#+begin_src~ code
+  blocks;
+- ~chat-markdown~: the documented chat subset of paragraphs, headings, bold,
+  italic, strike, inline and fenced code, described links, quotes, and lists.
+
+~chat-markdown~ has no underline marker.  Org uses ~_text_~ for underline.  A
+codec is not named CommonMark unless it satisfies the promised CommonMark
+conformance contract.
+
+Slackit registers ~slack-mrkdwn~ for legacy Slack source.  Disco registers
+~discord~ for exact Discord syntax.  Neither provider grammar becomes an
+Appkit built-in.
+
+** Parse result
+
+A parse result contains:
+
+- one validated document;
+- bounded diagnostics;
+- client-owned side-channel object occurrences.
+
+A diagnostic contains only kind, severity, and source bounds.  Malformed or
+unclosed user markup becomes literal text and parsing continues.  Unknown codec
+names, invalid registrations, invalid argument types, and invalid codec output
+are programmer errors and may signal.
+
+** Print result
+
+A print result contains:
+
+- one property-preserving source string;
+- semantic-loss records.
+
+A loss record contains only a semantic kind and structural path.  Unsupported
+semantics retain visible fallback content.
+
+An object printer may return visible source carrying the original Appkit input
+object properties.  Parsing that source restores the opaque occurrence before
+the codec reads visible markers.  A provider wire encoder is separate and may
+serialize the same opaque value to an exact provider token.
+
+For every declared capability, codecs provide semantic rather than byte-for-byte
+round trips:
+
+#+begin_example
+normalize(parse(codec, print(codec, document)))
+    == normalize(document)
+#+end_example
+
+Provider codecs may construct provider objects from exact provider token syntax.
+Generic codecs never infer identities from visible labels.
+
+* Structured compose objects
+
+Before parsing, Appkit walks valid occurrence spans defined by the existing
+~appkit-chatbuf-input-object-*~ properties.  Equal adjacent payloads remain
+separate occurrences.
+
+The client classifier returns one disposition:
+
+- *semantic*: replace the occurrence with an unforgeable call-local placeholder
+  and restore it as an inline object after parsing;
+- *side channel* plus a client key: remove the occurrence from markup source and
+  return it under that key in the parse result;
+- *reject* plus a diagnostic kind: stop rather than silently flatten or delete
+  the occurrence.
+
+The default is semantic.  Slackit user and channel objects are semantic.  Disco
+attachment objects are side-channel values; Disco identity objects are
+semantic.
+
+A codec sees a placeholder as one indivisible literal atom.  Missing,
+duplicated, split, or reordered placeholders invalidate its result.  A
+placeholder exists only during one synchronous parse call and never enters a
+document, buffer, registry, cache key, diagnostic, or log.
+
+Non-chatbuf clients may supply explicit object ranges under the same contract.
+Appkit assigns no provider meaning to semantic or side-channel values.
+
+* Source editing
+
+Formatted composition remains ordinary editable source.  The markup subsystem
+will expose codec-neutral commands for:
+
+- bold, italic, underline, strike, and inline code;
+- described links;
+- ordered and unordered list items;
+- code blocks with optional explicit language.
+
+The active codec owns the concrete edit.  It receives immutable source bounds
+and operation data, then returns replacement source and the desired point or
+region.  It may wrap a selection or insert balanced markers.  It does not parse,
+perform I/O, mutate a document, or cross a structured object boundary.
+
+~plain~ reports unsupported formatting.  Org emits Org syntax.
+~chat-markdown~ reports underline as unsupported instead of inventing a marker.
+Client commands and Transients invoke these operations but remain client-owned.
+
+* Selection, editing, and preview
+
+A compose buffer exposes an ordered codec list and one visible active codec.
+Selection follows this prefix model:
+
+- no prefix uses the active codec or the first configured codec;
+- one ~C-u~ chooses the second codec;
+- two ~C-u~ prefixes choose the third;
+- an out-of-range prefix is a user error.
+
+The client decides which send and preview commands accept the prefix.  Compose
+status and preview display the active codec so source is never silently parsed
+under an unknown grammar.
+
+When editing an existing formatted message, the client adapts provider data to a
+document and asks Appkit for the first configured codec that prints without
+semantic loss.  That codec becomes active.  If none is lossless, the client
+shows the losses before replacing the composer source.  It never silently
+flattens formatting.
+
+Preview parses one immutable capture and renders an Appkit-owned generated
+surface.  It may use a pure client fallback renderer for opaque objects, but it
+never starts transport, resolves identities over the network, executes code,
+opens links, or mutates source.
+
+One codec applies to the entire capture.  Mixed-codec regions are not part of
+the initial design.
+
+* Plain-text export
+
+Appkit exports semantic plain text for accessibility, summaries, notification
+fallbacks, and copy operations.  Export traverses visible text, links, lists,
+quotes, code, and object fallbacks without provider actions.  The client
+supplies policy for list markers, quote prefixes, hidden objects, and URL
+inclusion.  Export never prints opaque values.
+
+Plain export is not a wire encoder.  Slackit separately creates Slack
+~mrkdwn~ fallback with exact IDs; Disco separately creates Discord tokens.
+
+* Slackit integration
+
+** Incoming messages
+
+Supported Slack ~rich_text~ is authoritative.  Slackit maps:
+
+| Slack element | Markup document |
+|-
+| ~rich_text_section~ | paragraph or inline continuation |
+| ~rich_text_list~ | list with style, indent, and start from ~offset~ |
+| ~rich_text_quote~ | quote |
+| ~rich_text_preformatted~ | preformatted with exact ~language~ |
+| text and link elements | styled text and links |
+| user and channel elements | exact-ID objects |
+| emoji elements | Slackit emoji objects or canonical fallback |
+| unsupported elements | object fallback plus diagnostic |
+
+Top-level ~text~ is used only when structured content is absent or yields no
+visible content.  Legacy Slack ~mrkdwn~ uses Slackit's registered codec rather
+than generic chat Markdown.
+
+The Slackit renderer owns safe link activation, exact user and conversation
+navigation, workspace emoji, Slack faces, unsupported Block Kit presentation,
+and code presentation.
+
+After direct rich-text rendering is complete, ordered code-descriptor text
+matching is removed.  A preformatted node carries authoritative Slack language.
+Snippet ~filetype~ and the explicit user default remain client fallbacks; there
+is no automatic language detector.
+
+** Outgoing messages
+
+Slackit encodes one validated document into one immutable wire snapshot:
+
+#+begin_src emacs-lisp
+(:text slack-mrkdwn-fallback
+ :blocks rich-text-blocks)
+#+end_src
+
+The rich-text encoder maps:
+
+| Markup document | Slack wire |
+|-
+| paragraph | ~rich_text_section~ |
+| quote | ~rich_text_quote~ |
+| list | ~rich_text_list~ with style, indent, and offset |
+| preformatted | ~rich_text_preformatted~ with optional language |
+| text/link styles | Slack style booleans |
+| user/channel objects | exact Slack ~user~ and ~channel~ elements |
+| described link | Slack link element |
+| heading | bold section plus semantic-loss record |
+
+The top-level ~text~ is generated separately as complete notification and
+accessibility fallback.  It retains exact mention/channel IDs and visible
+content.  Underline degrades to unstyled text, never italic.
+
+~chat.postMessage~ and ~chat.update~ receive the captured ~text~ and ~blocks~ in
+one non-retried write.  Reconciliation prefers server-returned fields and fills
+only missing ~text~ or ~blocks~ from the captured snapshot.  It does not replace
+a richer server response with local fallback.  Existing operation and message
+revision fencing remains unchanged.
+
+Slackit's initial codec order is ~plain~, ~org~, then ~chat-markdown~ for
+backward compatibility.  Users may reorder it or select another active codec.
+Editing formatted content chooses the first configured lossless codec.
+
+Both position actions and exact-scope Transient suffixes call one Slackit-owned
+edit-entry operation.  It revalidates the captured view and message, builds the
+document, chooses a lossless codec, and installs one property-preserving source.
+This replaces duplicated top-level-text edit decoding without weakening
+Transient ownership.
+
+Canonical wire-text copy remains separate from rendered semantic copy.  A copy
+command must name which representation it exports.
+
+* Disco integration
+
+Disco registers the exact ~discord~ codec.  It maps ordinary Discord formatting
+to shared nodes and provider syntax to objects:
+
+| Discord syntax | Markup document |
+|-
+| bold, italic, underline, strike | styled text |
+| inline and fenced code | code text or preformatted |
+| described, bare, and angle links | links |
+| quote and heading | quote and heading blocks |
+| user, role, channel, command | exact provider object |
+| custom emoji, timestamp, navigation | exact provider object |
+| spoiler | inline object with formatted fallback children |
+| subtitle | object block with paragraph fallback |
+
+The first read-path cutover preserves current list presentation.  Discord list
+markers remain literal text and ~discord~ does not claim list semantic
+round-trips.  Org and chat-Markdown documents may still encode to canonical
+Discord list syntax on send.  A visible Disco list-rendering change is separate.
+
+Disco's renderer retains link activation, spoiler reveal/mask, headings,
+blockquote prefixes, code, emoji, relative timestamps, copy export, and exact
+primary-click behavior.  Identity labels come from message snapshots and Disco
+state.  Relative timestamps are uncached or have explicit expiry.
+
+Completion inserts visible structured objects for users, roles, and channels.
+The object classifier returns attachments as a side channel and identities as
+semantic objects.  Attachment extraction cannot delete identity objects, and
+attachments cannot become message text.
+
+The send path is:
+
+#+begin_example
+property-preserving capture
+ -> selected codec
+ -> document + attachment side channel
+ -> Disco encoder
+ -> Discord content + attachments
+ -> wire-length validation
+ -> one client-owned write
+#+end_example
+
+~discord~ remains the default codec.  Org and chat Markdown are explicit
+alternatives.  Preview and send consume the same immutable capture.
+
+Long-message validation applies to encoded Discord content.  Split mode divides
+at document block boundaries and prints each chunk as independently valid
+Discord markup.  A split inside one text or code node balances delimiters and
+fences in each chunk.  File mode preserves immutable captured source under an
+explicit client policy and never serializes opaque values.
+
+Editing parses existing content with ~discord~, restores identity objects, and
+prints through a selected lossless input codec.  Allowed-mention policy remains
+separate Discord payload state.
+
+The global plaintext render cache is replaced by an app-owned bounded derived
+cache keyed by message identity, message revision, render policy, and relevant
+state revision.  Text and opaque values never enter the key.  A source without
+stable identity may use a SHA-256 digest only in a justified owner-local bounded
+cache.
+
+* Safety and performance
+
+Markup operations are local deterministic transformations:
+
+- no codec performs network, file, subprocess, package-installation, or
+  transport work;
+- Org parsing never evaluates Babel, expands through user code, loads a
+  language, or runs major-mode hooks;
+- parsers do not run Font Lock, language detection, Tree-sitter installation,
+  LSP, or user hooks;
+- language names remain opaque metadata;
+- parsing is bounded by source length, nesting depth, and node count;
+- malformed input becomes literal text without retry loops;
+- registries contain functions and capability names, never source content;
+- Appkit owns no global source or document cache;
+- source text, URLs, opaque values, contact data, and code bodies never appear
+  in diagnostics, cache keys, buffer names, view IDs, or test failures;
+- parsing, printing, editing, normalization, preview, and export do not mutate
+  their inputs.
+
+Code Font Lock is presentation, not parsing.  Slackit retains its hook-free
+isolated fontifier during the first cutover.  Disco removes its current
+first-use major-mode hook behavior.  A shared safe fontifier is a separate
+presentation decision after markup parsing is stable.
+
+* Integration sequence
+
+1. Implement document values, normalization, validation, equality, result
+   values, object classification, and the codec registry.
+2. Implement ~plain~, Org, and chat-Markdown with semantic round-trip and
+   malformed-input tests.
+3. Implement source edits, selection, lossless edit-codec choice, preview, and
+   plain export without changing client keymaps.
+4. Register ~discord~ and cut over Disco's read path while retaining its current
+   interaction and copy contracts.
+5. Add Slackit's direct rich-text adapter and document renderer; remove code
+   descriptor matching after language, identity, code, and fallback contracts
+   pass through the new path.
+6. Cut over Slackit send/edit to one captured ~text + blocks~ snapshot.
+7. Cut over Disco completion, attachment classification, preview, send/edit,
+   and semantic long-message splitting.
+8. Delete obsolete client parsers, plaintext cache keys, descriptor matching,
+   duplicate edit paths, and pass-through helpers in the same cutovers.  There
+   are no aliases or parallel legacy paths.
+9. Update the integrator guide and client Appkit dependency floors with the
+   actual public API and release version.
+10. Evaluate other clients separately after Slackit and Disco prove the
+    contract.
+
+* Verification contracts
+
+** Appkit
+
+- Invalid trees are rejected without printing private values.
+- Every declared codec capability has a semantic parse/print round trip.
+- Malformed source recovers as literal text.
+- Equal adjacent structured objects remain distinct.
+- Semantic and side-channel classification neither loses nor duplicates an
+  occurrence.
+- Source editing cannot cross an object boundary.
+- Preview and export perform no actions or hooks.
+- No operation mutates input source or documents.
+
+** Slackit
+
+- Supported ~rich_text~ takes precedence over fallback ~text~.
+- Styles, lists, quotes, links, identities, emoji, and language map exactly.
+- Fallback ~text~ remains complete and underline never becomes italic.
+- Post and update receive one captured ~text + blocks~ snapshot.
+- Delayed write callbacks cannot regress realtime state.
+- Editing selects a lossless codec and restores exact identities.
+- Canonical and display copy behavior remain explicit.
+- Unlabelled old code stays fixed-pitch unless an explicit default mode is set.
+
+** Disco
+
+- Nested emphasis, escapes, code protection, exact links, spoilers, headings,
+  blockquote prefixes, custom emoji, copy export, and relative timestamps retain
+  their contracts.
+- Lists retain literal display in the first cutover.
+- Attachment and identity objects coexist in one draft.
+- Preview and send use the same immutable capture.
+- Discord encoding preserves exact IDs and allowed-mention policy.
+- Split messages contain independently valid markup.
+- Cache keys contain no plaintext.
+- Code fontification runs no user mode hooks.
+
+Slackit and Disco require graphical smoke checks after batch contracts pass.
+Faces, wrapping prefixes, spoiler display, code baselines, and point actions are
+not fully verifiable in hidden batch buffers.
