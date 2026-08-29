@@ -87,14 +87,35 @@
       (add-face-text-property start end face 'append))))
 
 (defun appkit-markup-ui--call-inserter (inserter node)
-  "Call client INSERTER for NODE within the current insertion boundary."
+  "Call client INSERTER for NODE inside one append-only boundary."
   (let ((buffer (current-buffer))
         (start (point)))
-    (funcall inserter node)
-    (unless (eq (current-buffer) buffer)
-      (error "Appkit markup inserter changed the current buffer"))
-    (when (< (point) start)
-      (error "Appkit markup inserter moved before its insertion point"))))
+    (save-restriction
+      ;; A zero-width restriction grows with insertion but exposes none of the
+      ;; caller's existing suffix to a client renderer.
+      (narrow-to-region start start)
+      (funcall inserter node)
+      (unless (eq (current-buffer) buffer)
+        (error "Appkit markup inserter changed the current buffer"))
+      (unless (= (point) (point-max))
+        (error "Appkit markup inserter did not finish after its insertion")))))
+
+(defun appkit-markup-ui--call-link-action (function url)
+  "Call link action factory FUNCTION for URL without permitting buffer edits."
+  (let ((buffer (current-buffer))
+        (position (point))
+        (minimum (point-min))
+        (maximum (point-max))
+        (tick (buffer-chars-modified-tick))
+        action)
+    (setq action (funcall function url))
+    (unless (and (eq (current-buffer) buffer)
+                 (= (point) position)
+                 (= (point-min) minimum)
+                 (= (point-max) maximum)
+                 (= (buffer-chars-modified-tick) tick))
+      (error "Appkit markup link action factory mutated renderer state"))
+    action))
 
 (cl-defun appkit-markup-ui--insert-inlines
     (children &key interactive-p link-action object-inserter)
@@ -116,8 +137,9 @@
         (when (< start (point))
           (add-face-text-property start (point) 'appkit-markup-link-face 'append)
           (when (and interactive-p (functionp link-action))
-            (when-let* ((action (funcall link-action
-                                         (appkit-markup-link-url node))))
+            (when-let* ((action
+                         (appkit-markup-ui--call-link-action
+                          link-action (appkit-markup-link-url node))))
               (appkit-ui-add-action
                start (point) action
                :help-echo (appkit-markup-link-url node)
@@ -230,8 +252,9 @@ INTERACTIVE-P permits LINK-ACTION, OBJECT-INSERTER, and
 PREFORMATTED-INSERTER.  With nil INTERACTIVE-P no client callback runs: links
 are inert, objects traverse their stored fallback, and code remains fixed-pitch.
 LINK-ACTION receives a URL and returns a zero-argument action or nil.  The two
-inserters receive their complete semantic node and may only insert forward in
-the current buffer.
+inserters receive their complete semantic node.  Their callback runs in an
+empty restriction that grows only through forward insertion and must finish at
+the end of that insertion.
 
 Insertion is atomic.  Errors leave no partial document behind."
   (let ((document (appkit-markup-normalize document))

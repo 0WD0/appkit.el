@@ -23,61 +23,74 @@
 (cl-defstruct (appkit-markup-document
                (:constructor appkit-markup--document-create)
                (:copier nil))
-  blocks)
+  (blocks nil :read-only t))
 
 (cl-defstruct (appkit-markup-paragraph
                (:constructor appkit-markup--paragraph-create)
                (:copier nil))
-  children)
+  (children nil :read-only t))
 
 (cl-defstruct (appkit-markup-heading
                (:constructor appkit-markup--heading-create)
                (:copier nil))
-  level children)
+  (level nil :read-only t)
+  (children nil :read-only t))
 
 (cl-defstruct (appkit-markup-quote
                (:constructor appkit-markup--quote-create)
                (:copier nil))
-  blocks)
+  (blocks nil :read-only t))
 
 (cl-defstruct (appkit-markup-list
                (:constructor appkit-markup--list-create)
                (:copier nil))
-  style start items)
+  (style nil :read-only t)
+  (start nil :read-only t)
+  (items nil :read-only t))
 
 (cl-defstruct (appkit-markup-list-item
                (:constructor appkit-markup--list-item-create)
                (:copier nil))
-  blocks)
+  (blocks nil :read-only t))
 
 (cl-defstruct (appkit-markup-preformatted
                (:constructor appkit-markup--preformatted-create)
                (:copier nil))
-  text language)
+  (text nil :read-only t)
+  (language nil :read-only t))
 
 (cl-defstruct (appkit-markup-object-block
                (:constructor appkit-markup--object-block-create)
                (:copier nil))
-  value fallback)
+  (value nil :read-only t)
+  (fallback nil :read-only t))
 
 (cl-defstruct (appkit-markup-text
                (:constructor appkit-markup--text-create)
                (:copier nil))
-  text styles)
+  (text nil :read-only t)
+  (styles nil :read-only t))
 
 (cl-defstruct (appkit-markup-link
                (:constructor appkit-markup--link-create)
                (:copier nil))
-  url children)
+  (url nil :read-only t)
+  (children nil :read-only t))
 
 (cl-defstruct (appkit-markup-object
                (:constructor appkit-markup--object-create)
                (:copier nil))
-  value fallback styles)
+  (value nil :read-only t)
+  (fallback nil :read-only t)
+  (styles nil :read-only t))
 
 (cl-defstruct (appkit-markup-line-break
                (:constructor appkit-markup--line-break-create)
                (:copier nil)))
+
+(defconst appkit-markup--line-break
+  (appkit-markup--line-break-create)
+  "Shared immutable explicit line-break value.")
 
 (defun appkit-markup--invalid (kind &optional path)
   "Signal a markup error of KIND at structural PATH.
@@ -188,7 +201,7 @@ spans; provider adapters flatten richer labels to their visible fallback."
 
 (defun appkit-markup-line-break ()
   "Return an explicit inline line break."
-  (appkit-markup--line-break-create))
+  appkit-markup--line-break)
 
 (defun appkit-markup--enter (node active path)
   "Mark NODE active while validating PATH, rejecting graph cycles."
@@ -216,16 +229,20 @@ When LINK-LABEL-P is non-nil, accept styled text nodes only."
              (when (and link-label-p
                         (not (appkit-markup-text-p normalized)))
                (appkit-markup--invalid 'invalid-link-label path))
-             (if (and previous
-                      (appkit-markup-text-p previous)
-                      (appkit-markup-text-p normalized)
-                      (equal (appkit-markup-text-styles previous)
-                             (appkit-markup-text-styles normalized)))
-                 (setf (appkit-markup-text-text previous)
-                       (concat (appkit-markup-text-text previous)
-                               (appkit-markup-text-text normalized)))
-               (push normalized result)
-               (setq previous normalized)))
+            (if (and previous
+                     (appkit-markup-text-p previous)
+                     (appkit-markup-text-p normalized)
+                     (equal (appkit-markup-text-styles previous)
+                            (appkit-markup-text-styles normalized)))
+                (let ((merged
+                       (appkit-markup--text-create
+                        :text (concat (appkit-markup-text-text previous)
+                                      (appkit-markup-text-text normalized))
+                        :styles (appkit-markup-text-styles previous))))
+                  (setcar result merged)
+                  (setq previous merged))
+              (push normalized result)
+              (setq previous normalized)))
     (nreverse result)))
 
 (defun appkit-markup--normalize-inline (node active path)
@@ -267,7 +284,7 @@ When LINK-LABEL-P is non-nil, accept styled text nodes only."
           (append path '(fallback)))
          :styles (appkit-markup--styles
                   (appkit-markup-object-styles node))))
-       (t (appkit-markup--line-break-create)))
+       (t appkit-markup--line-break))
     (appkit-markup--leave node active)))
 
 (defun appkit-markup--normalize-list-item (item active path)
