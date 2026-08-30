@@ -46,7 +46,6 @@
   (label nil :read-only t)
   (parse-function nil :read-only t)
   (print-function nil :read-only t)
-  (edit-function nil :read-only t)
   (capabilities nil :read-only t))
 
 (cl-defstruct (appkit-markup-diagnostic
@@ -83,14 +82,6 @@
                (:copier nil))
   (source nil :read-only t)
   (losses nil :read-only t))
-
-(cl-defstruct (appkit-markup-edit-result
-               (:constructor appkit-markup-edit-result--create)
-               (:copier nil))
-  (source nil :read-only t)
-  (start nil :read-only t)
-  (end nil :read-only t))
-
 
 (cl-defstruct (appkit-markup-codec--object
                (:constructor appkit-markup-codec--object-create)
@@ -153,14 +144,12 @@
    :losses (copy-sequence losses)))
 
 (cl-defun appkit-markup-register-codec
-    (name &key parse print edit capabilities label)
+    (name &key parse print capabilities label)
   "Register source codec NAME and return its immutable descriptor.
 
-PARSE and PRINT are required synchronous functions.  EDIT is an optional
-source-edit function.  CAPABILITIES is a duplicate-free subset of
-`appkit-markup-codec-capabilities'."
+PARSE and PRINT are required synchronous functions.  CAPABILITIES is a
+duplicate-free subset of `appkit-markup-codec-capabilities'."
   (unless (and (symbolp name) name (functionp parse) (functionp print)
-               (or (null edit) (functionp edit))
                (or (null label) (stringp label))
                (proper-list-p capabilities))
     (signal 'appkit-markup-codec-error '(invalid-registration)))
@@ -173,7 +162,6 @@ source-edit function.  CAPABILITIES is a duplicate-free subset of
           :label (substring-no-properties (or label (symbol-name name)))
           :parse-function parse
           :print-function print
-          :edit-function edit
           :capabilities
           (seq-filter (lambda (capability) (memq capability capabilities))
                       appkit-markup-codec-capabilities))))
@@ -681,63 +669,6 @@ OBJECT-CLASSIFIER receives each opaque value and visible label.  It returns
             (signal 'appkit-markup-codec-error
                     '(object-printer-output-contains-placeholder)))))
       (apply #'concat (nreverse pieces)))))
-
-(defun appkit-markup-edit-result (source start end)
-  "Return a property-preserving edit SOURCE with desired START..END."
-  (unless (and (stringp source)
-               (integerp start) (integerp end)
-               (<= 0 start end (length source)))
-    (signal 'appkit-markup-codec-error '(invalid-edit-result)))
-  (appkit-markup-edit-result--create
-   :source (copy-sequence source) :start start :end end))
-
-(defun appkit-markup-codec--edit-crosses-object-p (source start end)
-  "Return non-nil when SOURCE START..END crosses a structured object."
-  (let ((position 0)
-        (finish (length source))
-        crossed)
-    (while (and (< position finish) (not crossed))
-      (if (get-text-property
-           position appkit-chatbuf-input-object-property source)
-          (let ((object-end
-                 (appkit-markup-codec--object-end source position)))
-            (appkit-markup-codec--validate-object-run
-             source position object-end)
-            (setq crossed
-                  (if (= start end)
-                      (and (< position start) (< start object-end))
-                    (and (< position end) (> object-end start))))
-            (setq position object-end))
-        (setq position
-              (or (next-single-property-change
-                   position appkit-chatbuf-input-object-property source finish)
-                  finish))))
-    crossed))
-
-(cl-defun appkit-markup-edit
-    (name source operation start end &key data context)
-  "Apply codec NAME source edit OPERATION to SOURCE START..END.
-
-DATA is operation-specific immutable client input.  Edits that intersect a
-structured compose object are rejected before client or codec code runs."
-  (let* ((codec (appkit-markup-codec name))
-         (source (appkit-markup-codec--check-source source))
-         (function (appkit-markup-codec-edit-function codec)))
-    (unless (and (symbolp operation)
-                 (integerp start) (integerp end)
-                 (<= 0 start end (length source)))
-      (signal 'appkit-markup-codec-error '(invalid-edit-request)))
-    (unless function
-      (signal 'appkit-markup-codec-error '(unsupported-source-edit)))
-    (when (appkit-markup-codec--edit-crosses-object-p source start end)
-      (signal 'appkit-markup-codec-error '(edit-crosses-object)))
-    (let ((result (funcall function source operation start end data context)))
-      (unless (appkit-markup-edit-result-p result)
-        (signal 'appkit-markup-codec-error '(invalid-editor-result)))
-      (appkit-markup-edit-result
-       (appkit-markup-edit-result-source result)
-       (appkit-markup-edit-result-start result)
-       (appkit-markup-edit-result-end result)))))
 
 (cl-defun appkit-markup-print (name document &key context object-printer)
   "Print DOCUMENT through codec NAME and return a print result.

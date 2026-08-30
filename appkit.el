@@ -27,6 +27,7 @@
 (require 'appkit-invalidation)
 (require 'appkit-projection)
 (require 'appkit-compose)
+(require 'appkit-compose-edit)
 (require 'appkit-chat-compose)
 (require 'appkit-chat-history)
 (require 'appkit-chat-completion)

@@ -552,7 +552,6 @@
   "Parse Org SOURCE with hook-free built-in Org Element semantics."
   (appkit-markup-codecs--org-element-parse source))
 
-
 (defun appkit-markup-codecs--org-print (document _context)
   "Print DOCUMENT as canonical safe Org chat source."
   (appkit-markup-codecs--print document 'org))
@@ -560,123 +559,6 @@
 (defun appkit-markup-codecs--markdown-print (document _context)
   "Print DOCUMENT as canonical chat Markdown source."
   (appkit-markup-codecs--print document 'markdown))
-
-(defun appkit-markup-codecs--wrap-edit
-    (source start end opening closing)
-  "Wrap SOURCE START..END in OPENING and CLOSING."
-  (let ((edited (concat (substring source 0 start)
-                        opening
-                        (substring source start end)
-                        closing
-                        (substring source end))))
-    (if (= start end)
-        (appkit-markup-edit-result
-         edited (+ start (length opening)) (+ start (length opening)))
-      (appkit-markup-edit-result
-       edited (+ start (length opening)) (+ end (length opening))))))
-
-(defun appkit-markup-codecs--line-edit
-    (source start end first-prefix rest-prefix)
-  "Prefix every source line touched by START..END."
-  (let* ((line-start
-          (if-let* ((newline
-                     (cl-position ?\n source :end start :from-end t)))
-              (1+ newline)
-            0))
-         (line-end (or (cl-position ?\n source :start end)
-                       (length source)))
-         (lines (split-string (substring source line-start line-end) "\n" nil))
-         (first t)
-         (index 0)
-         (replacement
-          (mapconcat
-           (lambda (line)
-             (let* ((prefix (if first first-prefix rest-prefix))
-                    (prefix (if (functionp prefix)
-                                (funcall prefix index)
-                              prefix)))
-               (prog1 (concat prefix line)
-                 (setq first nil)
-                 (cl-incf index))))
-           lines "\n"))
-         (edited (concat (substring source 0 line-start)
-                         replacement
-                         (substring source line-end))))
-    (appkit-markup-edit-result
-     edited line-start (+ line-start (length replacement)))))
-
-(defun appkit-markup-codecs--edit
-    (kind source operation start end data _context)
-  "Apply KIND source OPERATION to SOURCE START..END."
-  (pcase operation
-    ((or 'bold 'italic 'underline 'strike 'code)
-     (if-let* ((delimiter
-                (appkit-markup-codecs--style-delimiter kind operation)))
-         (appkit-markup-codecs--wrap-edit
-          source start end delimiter delimiter)
-       (signal 'appkit-markup-codec-error '(unsupported-source-edit))))
-    ('link
-     (unless (and (stringp data)
-                  (not (string-empty-p data))
-                  (not (string-match-p "[\r\n]" data)))
-       (signal 'appkit-markup-codec-error '(invalid-link-edit)))
-     (if (eq kind 'org)
-         (appkit-markup-codecs--wrap-edit
-          source start end (concat "[[" data "][") "]]")
-       (appkit-markup-codecs--wrap-edit
-        source start end "[" (concat "](" data ")"))))
-    ('quote
-     (if (eq kind 'org)
-         (appkit-markup-codecs--wrap-edit
-          source start end "#+begin_quote\n" "\n#+end_quote")
-       (appkit-markup-codecs--line-edit source start end "> " "> ")))
-    ('unordered-list
-     (appkit-markup-codecs--line-edit source start end "- " "- "))
-    ('ordered-list
-     (appkit-markup-codecs--line-edit
-      source start end
-      (lambda (index) (format "%d. " (1+ index)))
-      (lambda (index) (format "%d. " (1+ index)))))
-    ('heading
-     (unless (and (integerp data) (<= 1 data 6))
-       (signal 'appkit-markup-codec-error '(invalid-heading-edit)))
-     (appkit-markup-codecs--line-edit
-      source start end
-      (concat (make-string data (if (eq kind 'org) ?* ?#)) " ")
-      ""))
-    ('preformatted
-     (let ((language
-            (cond ((null data) nil)
-                  ((and (stringp data)
-                        (not (string-empty-p data))
-                        (not (string-match-p "[\r\n \t]" data)))
-                   data)
-                  (t (signal 'appkit-markup-codec-error
-                             '(invalid-code-language))))))
-       (if (eq kind 'org)
-           (appkit-markup-codecs--wrap-edit
-            source start end
-            (concat "#+begin_src"
-                    (if language (concat " " language) "")
-                    "\n")
-            "\n#+end_src")
-         (appkit-markup-codecs--wrap-edit
-          source start end
-          (concat "```" (or language "") "\n")
-          "\n```"))))
-    (_ (signal 'appkit-markup-codec-error '(unsupported-source-edit)))))
-
-(defun appkit-markup-codecs--org-edit
-    (source operation start end data context)
-  "Apply safe Org source edit OPERATION."
-  (appkit-markup-codecs--edit
-   'org source operation start end data context))
-
-(defun appkit-markup-codecs--markdown-edit
-    (source operation start end data context)
-  "Apply Markdown source edit OPERATION."
-  (appkit-markup-codecs--edit
-   'markdown source operation start end data context))
 
 (appkit-markup-register-codec
  'plain
@@ -689,7 +571,6 @@
  :label "Org"
  :parse #'appkit-markup-codecs--org-parse
  :print #'appkit-markup-codecs--org-print
- :edit #'appkit-markup-codecs--org-edit
  :capabilities '(heading bold italic underline strike code link quote list
                   preformatted))
 
@@ -698,7 +579,6 @@
  :label "Markdown"
  :parse #'appkit-markup-markdown-ts--parse
  :print #'appkit-markup-codecs--markdown-print
- :edit #'appkit-markup-codecs--markdown-edit
  :capabilities '(heading bold italic strike code link quote list preformatted))
 
 (provide 'appkit-markup-codecs)

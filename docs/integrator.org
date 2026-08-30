@@ -78,6 +78,14 @@ outside editable text, such as an attachment or identity selection, call
 generation with its own durable revision, but Appkit does not own that durable
 frontier.
 
+** Child compose editors
+
+Use ~appkit-compose-edit-buffer~ when one client-owned string needs a temporary
+native major-mode editor.  Pass the exact live app/view owner and a content-free
+buffer name.  Appkit owns recursive finish/cancel interaction and buffer
+lifecycle only; language selection, validation rules, structured-object
+insertion, and wire encoding remain client responsibilities.
+
 ** Chat compose
 
 ~appkit-chat-compose-mode~ is the chat-specific multi-part editor.  Committed
@@ -99,7 +107,7 @@ state directly when structured objects must survive capture.
 ** Markup documents
 
 [[file:markup.org][Markup documents]] define the semantic model, native UI,
-codec registry, structured-object fencing, source editing, preview, and
+codec registry, structured-object fencing, codec selection, preview, and
 plain-text export contracts.
 
 Appkit 0.3.0 ships ~appkit-markup~, ~appkit-markup-ui~,

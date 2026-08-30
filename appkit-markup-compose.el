@@ -5,14 +5,12 @@
 ;;; Commentary:
 
 ;; Telega-inspired per-send codec selection, but with one immutable semantic
-;; capture shared by preview and provider encoding.  Appkit owns source parsing
-;; and edit geometry; clients own active codec configuration, drafts, wire
-;; encoding, and transport.
+;; capture shared by preview and provider encoding.  Appkit owns source parsing;
+;; clients own active codec configuration, drafts, wire encoding, and transport.
 
 ;;; Code:
 
 (require 'cl-lib)
-(require 'subr-x)
 (require 'appkit-compose)
 (require 'appkit-markup-codec)
 (require 'appkit-markup-codecs)
@@ -215,106 +213,6 @@ client input, not a transport operation."
                      (appkit-markup-parse-result-side-channels parse-result))
      :source (copy-sequence (appkit-markup-print-result-source printed))
      :losses (copy-sequence (appkit-markup-print-result-losses printed)))))
-
-(defun appkit-markup-compose--source-selection (bounds)
-  "Return source-relative active region or point within BOUNDS."
-  (let* ((start (car bounds))
-         (finish (cdr bounds))
-         (region-start (if (use-region-p) (region-beginning) (point)))
-         (region-end (if (use-region-p) (region-end) (point))))
-    (unless (and (<= start region-start finish)
-                 (<= start region-end finish))
-      (user-error "Point or region is outside compose source"))
-    (cons (- region-start start) (- region-end start))))
-
-(cl-defun appkit-markup-compose-apply-edit
-    (operation &key data codec)
-  "Apply codec-neutral source edit OPERATION to point or active region.
-
-DATA is operation-specific input.  CODEC defaults to the active codec.  The
-replacement is one combined semantic buffer change and cannot cross structured
-input-object boundaries."
-  (let* ((bounds (or (appkit-compose-source-bounds)
-                     (user-error "Compose source is unavailable")))
-         (selection (appkit-markup-compose--source-selection bounds))
-         (source (buffer-substring (car bounds) (cdr bounds)))
-         (result
-          (appkit-markup-edit
-           (or codec appkit-markup-compose-active-codec)
-           source operation (car selection) (cdr selection)
-           :data data :context (appkit-markup-compose--context)))
-         (absolute-start (+ (car bounds)
-                            (appkit-markup-edit-result-start result)))
-         (absolute-end (+ (car bounds)
-                          (appkit-markup-edit-result-end result))))
-    (atomic-change-group
-      (combine-after-change-calls
-        (delete-region (car bounds) (cdr bounds))
-        (goto-char (car bounds))
-        (insert (appkit-markup-edit-result-source result))))
-    (goto-char absolute-end)
-    (if (= absolute-start absolute-end)
-        (deactivate-mark)
-      (set-mark absolute-start)
-      (activate-mark))
-    result))
-
-(defun appkit-markup-compose-bold ()
-  "Wrap region or point using the active codec's bold syntax."
-  (interactive)
-  (appkit-markup-compose-apply-edit 'bold))
-
-(defun appkit-markup-compose-italic ()
-  "Wrap region or point using the active codec's italic syntax."
-  (interactive)
-  (appkit-markup-compose-apply-edit 'italic))
-
-(defun appkit-markup-compose-underline ()
-  "Wrap region or point using the active codec's underline syntax."
-  (interactive)
-  (appkit-markup-compose-apply-edit 'underline))
-
-(defun appkit-markup-compose-strike ()
-  "Wrap region or point using the active codec's strike syntax."
-  (interactive)
-  (appkit-markup-compose-apply-edit 'strike))
-
-(defun appkit-markup-compose-code ()
-  "Wrap region or point using the active codec's inline-code syntax."
-  (interactive)
-  (appkit-markup-compose-apply-edit 'code))
-
-(defun appkit-markup-compose-link (url)
-  "Wrap region or point as a described link to URL."
-  (interactive "sLink URL: ")
-  (appkit-markup-compose-apply-edit 'link :data url))
-
-(defun appkit-markup-compose-unordered-list ()
-  "Turn touched source lines into unordered list items."
-  (interactive)
-  (appkit-markup-compose-apply-edit 'unordered-list))
-
-(defun appkit-markup-compose-ordered-list ()
-  "Turn touched source lines into ordered list items."
-  (interactive)
-  (appkit-markup-compose-apply-edit 'ordered-list))
-
-(defun appkit-markup-compose-quote ()
-  "Turn touched source lines into quoted source."
-  (interactive)
-  (appkit-markup-compose-apply-edit 'quote))
-
-(defun appkit-markup-compose-heading (level)
-  "Turn touched source line into heading LEVEL."
-  (interactive "nHeading level (1-6): ")
-  (appkit-markup-compose-apply-edit 'heading :data level))
-
-(defun appkit-markup-compose-preformatted (&optional language)
-  "Wrap region or point as a code block with optional LANGUAGE."
-  (interactive
-   (list (let ((value (read-string "Code language (empty for none): ")))
-           (unless (string-empty-p value) value))))
-  (appkit-markup-compose-apply-edit 'preformatted :data language))
 
 (provide 'appkit-markup-compose)
 
