@@ -121,17 +121,6 @@
         (eq (appkit-markup-loss-kind loss) 'preformatted))
       (appkit-markup-print-result-losses printed)))))
 
-(ert-deftest appkit-markup-org-quote-edit-produces-org-quote ()
-  (let* ((edited (appkit-markup-edit 'org "quoted" 'quote 0 6))
-         (parsed
-          (appkit-markup-parse
-           'org (appkit-markup-edit-result-source edited)))
-         (block
-          (car
-           (appkit-markup-document-blocks
-            (appkit-markup-parse-result-document parsed)))))
-    (should (appkit-markup-quote-p block))))
-
 (ert-deftest appkit-markup-codecs-parse-nested-inline-syntax ()
   (let* ((markdown
           (appkit-markup-parse
@@ -275,20 +264,6 @@
                    "@**Ada|7** "))
     (should-not (appkit-markup-print-result-losses printed))))
 
-(ert-deftest appkit-markup-source-edit-rejects-object-boundaries ()
-  (let* ((source
-          (concat "before "
-                  (appkit-chatbuf-input-object-string "@Ada" 'mention)
-                  "after"))
-         (object-start 7))
-    (should-error
-     (appkit-markup-edit
-      'markdown source 'bold object-start (1+ object-start))
-     :type 'appkit-markup-codec-error)
-    (let ((result (appkit-markup-edit
-                   'markdown source 'bold 0 6)))
-      (should (string-prefix-p "**before**" (appkit-markup-edit-result-source result))))))
-
 (ert-deftest appkit-markup-compose-capture-drives-preview-and-output ()
   (with-temp-buffer
     (insert "**bold**")
@@ -318,21 +293,6 @@
     (should (eq (appkit-markup-compose-select-codec '(16)) 'plain))
     (should-error (appkit-markup-compose-select-codec '(64))
                   :type 'user-error)))
-
-(ert-deftest appkit-markup-compose-source-edit-is-one-generation ()
-  (with-temp-buffer
-    (insert "body")
-    (appkit-compose-setup)
-    (appkit-markup-compose-setup
-     :codecs '(markdown org)
-     :active-codec 'markdown)
-    (goto-char (point-min))
-    (set-mark (point-max))
-    (activate-mark)
-    (let ((generation (appkit-compose-generation)))
-      (appkit-markup-compose-bold)
-      (should (= (appkit-compose-generation) (1+ generation)))
-      (should (equal (buffer-string) "**body**")))))
 
 (ert-deftest appkit-markup-org-parser-uses-org-element-without-mode-hooks ()
   (let ((org-mode-hook (list (lambda () (ert-fail "org-mode-hook ran"))))

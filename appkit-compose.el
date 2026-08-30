@@ -48,6 +48,7 @@
 (defvar appkit-compose--tracking-inhibited nil
   "Dynamically non-nil while generated edits must not advance a generation.")
 
+
 (defmacro appkit-compose-without-tracking (&rest body)
   "Run BODY without treating its buffer edits as semantic source changes."
   (declare (indent 0) (debug t))

@@ -2,9 +2,9 @@
 #+options: toc:3 num:nil
 
 This document defines Appkit's protocol-neutral markup value, codec boundary,
-and compose interaction.  Zulip is the first native Document renderer and the
-first source-backed compose integration.  Slackit, Disco, Chirp, and Telega
-migrations remain later client work.
+and compose interaction.  Zulip's cooked-DOM adapter and Disco's provider codec
+are the first native consumers.  Slackit, Chirp, and Telega migrations remain
+later client work.
 
 * Current source status
 
@@ -19,8 +19,8 @@ provides:
 - built-in ~plain~, ~org~, and ~markdown~ codecs;
 - structured-object semantic/side-channel/reject classification with
   call-local placeholder integrity and original-coordinate diagnostics;
-- Telega-style per-command codec selection, active-codec state, codec-neutral
-  source edits, pure preview, and generation-qualified output snapshots.
+- Telega-style per-command codec selection, active-codec state, pure preview,
+  and generation-qualified output snapshots.
 
 The ~org~ parser explicitly uses Emacs's built-in ~org~ and ~org-element~
 semantics in a temporary buffer.  It never enables ~org-mode~, Font Lock,
@@ -35,13 +35,13 @@ compose is implied by this release.
 
 * Ownership
 
-Appkit owns the transient semantic document and reusable source operations:
+Appkit owns the transient semantic document and source-backed composition:
 
 - immutable block and inline values;
 - construction, validation, normalization, and semantic equality;
 - named parser/printer codecs;
 - structured input-object protection and side-channel classification;
-- codec selection, source editing, preview, and plain-text export;
+- codec selection, preview, and plain-text export;
 - position-only diagnostics and semantic-loss records.
 
 Clients own domain and protocol behavior:
@@ -203,7 +203,6 @@ A codec registration contains:
 - a parser from property-preserving source to a parse result;
 - a printer from a validated document to a print result;
 - declared semantic capabilities;
-- optional source-editing operations;
 - a human-readable label.
 
 The public registry and operation API is:
@@ -213,7 +212,6 @@ The public registry and operation API is:
  'provider-source
  :parse #'client-parse
  :print #'client-print
- :edit #'client-edit
  :capabilities '(heading bold italic underline strike code link quote list
                  preformatted))
 
@@ -252,8 +250,9 @@ The installer uses the same pinned tree-sitter-markdown commit as GNU Emacs.
 Parsing never downloads, compiles, or updates a grammar.  Missing grammars
 produce a content-free codec error.
 
-Slackit may register ~slack-mrkdwn~ and Disco may register ~discord~ during
-their migrations.  Neither provider grammar becomes an Appkit built-in.
+Slackit may register ~slack-mrkdwn~ during its migration.  Disco's
+~discord-markdown~ provider codec remains client-owned.  Neither provider
+grammar becomes an Appkit built-in.
 
 ** Parse result
 
@@ -310,8 +309,8 @@ The client classifier returns one disposition:
   the occurrence.
 
 The default is semantic.  Zulip mention objects are semantic and print through
-Zulip's exact-ID object printer.  Future clients may classify attachments as
-side-channel values independently of semantic identity objects.
+Zulip's exact-ID object printer.  Disco classifies attachment objects as a side
+channel; its identity tokens remain provider source syntax.
 
 A codec sees a placeholder as one indivisible literal atom.  Missing,
 duplicated, split, or reordered placeholders invalidate its result.  A
@@ -322,27 +321,7 @@ The current scanner consumes Appkit chatbuf occurrence spans.  Explicit
 non-chatbuf object-range input remains future API.  Appkit assigns no provider
 meaning to semantic or side-channel values.
 
-* Source editing
-
-Formatted composition remains ordinary editable source.  The markup subsystem
-exposes codec-neutral operations for:
-
-- bold, italic, underline, strike, and inline code;
-- described links and headings;
-- quotes, ordered and unordered list items;
-- code blocks with optional explicit language.
-
-The active codec owns the concrete edit.  It receives immutable source bounds
-and operation data, then returns property-preserving replacement source and the
-desired point or region.  One application is one combined semantic generation
-change.  It never parses, performs I/O, mutates a Document, or crosses a
-structured object boundary.
-
-~plain~ rejects formatting.  Org emits canonical Org syntax.  Markdown rejects
-underline rather than inventing a marker.  Clients own key bindings and menus;
-Zulip exposes one Telega-style formatting dispatcher.
-
-* Selection, editing, and preview
+* Selection and preview
 
 A compose buffer exposes an ordered codec list and one visible active codec.
 Selection follows this prefix model:
@@ -458,8 +437,8 @@ command must name which representation it exports.
 
 * Disco integration
 
-Disco registers the exact ~discord~ codec.  It maps ordinary Discord formatting
-to shared nodes and provider syntax to objects:
+Disco registers the exact ~discord-markdown~ codec.  It maps ordinary Discord
+formatting to shared nodes and provider syntax to objects:
 
 | Discord syntax | Markup document |
 |-
@@ -472,10 +451,9 @@ to shared nodes and provider syntax to objects:
 | spoiler | inline object with formatted fallback children |
 | subtitle | object block with paragraph fallback |
 
-The first read-path cutover preserves current list presentation.  Discord list
-markers remain literal text and ~discord~ does not claim list semantic
-round-trips.  Org and Markdown documents may still encode to canonical
-Discord list syntax on send.  A visible Disco list-rendering change is separate.
+Discord ordered and unordered lists map to shared list nodes and render through
+Appkit's native list geometry.  Org and Markdown documents encode to canonical
+Discord list syntax on send.
 
 Disco's renderer retains link activation, spoiler reveal/mask, headings,
 blockquote prefixes, code, emoji, relative timestamps, copy export, and exact
@@ -499,8 +477,8 @@ property-preserving capture
  -> one client-owned write
 #+end_example
 
-~discord~ remains the default codec.  Org and chat Markdown are explicit
-alternatives.  Preview and send consume the same immutable capture.
+~discord-markdown~ remains the default codec.  Org and chat Markdown are
+explicit alternatives.  Preview and send consume the same immutable capture.
 
 Long-message validation applies to encoded Discord content.  Split mode divides
 at document block boundaries and prints each chunk as independently valid
@@ -508,15 +486,13 @@ Discord markup.  A split inside one text or code node balances delimiters and
 fences in each chunk.  File mode preserves immutable captured source under an
 explicit client policy and never serializes opaque values.
 
-Editing parses existing content with ~discord~, restores identity objects, and
-prints through a selected lossless input codec.  Allowed-mention policy remains
-separate Discord payload state.
+Editing parses existing content with ~discord-markdown~, restores identity
+objects, and prints through a selected lossless input codec.  Allowed-mention
+policy remains separate Discord payload state.
 
-The global plaintext render cache is replaced by an app-owned bounded derived
-cache keyed by message identity, message revision, render policy, and relevant
-state revision.  Text and opaque values never enter the key.  A source without
-stable identity may use a SHA-256 digest only in a justified owner-local bounded
-cache.
+The old global plaintext render cache is removed.  Native insertion derives
+presentation from the current semantic document on each render; source text and
+opaque values are not retained in a Markup cache.
 
 * Safety and performance
 
@@ -536,8 +512,8 @@ Markup operations are local deterministic transformations:
 - Appkit owns no global source or Document cache;
 - source text, URLs, opaque values, contact data, and code bodies never appear
   in diagnostics, cache keys, buffer names, view IDs, or test failures;
-- parsing, printing, editing, normalization, preview, and export do not mutate
-  their inputs.
+- parsing, printing, normalization, preview, and export do not mutate their
+  inputs.
 
 Code Font Lock is presentation, not parsing.  Slackit retains its hook-free
 isolated fontifier during the first cutover.  Disco removes its current
@@ -546,7 +522,7 @@ presentation decision after markup parsing is stable.
 
 * Integration sequence
 
-Completed in Appkit 0.3.0 and emacs-zulip:
+Completed across Appkit 0.3.0, emacs-zulip, and Disco:
 
 1. Document values, normalization, equality, plain export, and transactional
    native insertion.
@@ -555,16 +531,17 @@ Completed in Appkit 0.3.0 and emacs-zulip:
    and coordinate mapping.
 4. Real ~org-element~ parsing, direct Markdown Tree-sitter adaptation,
    canonical printers, and semantic round-trip tests.
-5. Source edits, active/prefix codec selection, immutable capture, pure
-   preview, semantic-loss rejection, and Zulip Markdown output.
+5. Active/prefix codec selection, immutable capture, pure preview,
+   semantic-loss rejection, and Zulip Markdown output.
 6. Zulip compose/send/edit cutover, including exact mention object printing and
    restoration of the draft's active codec after server-message editing.
+7. Disco's provider-exact codec and native read/compose path.
 
 Remaining client migrations:
 
-7. Register Disco's provider-exact codec and cut over its read/compose path.
 8. Add Slackit's direct rich-text adapter and provider-exact output snapshot.
-9. Migrate their caches and delete obsolete parsers in the same clean cutovers.
+9. Migrate remaining clients and delete obsolete parsers in the same clean
+   cutovers.
 
 * Verification contracts
 
@@ -576,7 +553,6 @@ Remaining client migrations:
 - Equal adjacent structured objects remain distinct.
 - Semantic and side-channel classification neither loses nor duplicates an
   occurrence.
-- Source editing cannot cross an object boundary.
 - Preview and export perform no actions or hooks.
 - No operation mutates input source or documents.
 
@@ -596,13 +572,13 @@ Remaining client migrations:
 - Nested emphasis, escapes, code protection, exact links, spoilers, headings,
   blockquote prefixes, custom emoji, copy export, and relative timestamps retain
   their contracts.
-- Lists retain literal display in the first cutover.
-- Attachment and identity objects coexist in one draft.
+- Lists retain semantic structure and shared native geometry.
+- Attachment objects coexist with provider identity source tokens in one draft.
 - Preview and send use the same immutable capture.
 - Discord encoding preserves exact IDs and allowed-mention policy.
 - Split messages contain independently valid markup.
 - Cache keys contain no plaintext.
-- Code fontification runs no user mode hooks.
+- Code parsing and rendering run no user mode hooks.
 
 Slackit and Disco require graphical smoke checks after batch contracts pass.
 Faces, wrapping prefixes, spoiler display, code baselines, and point actions are
