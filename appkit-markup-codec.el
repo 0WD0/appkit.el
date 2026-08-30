@@ -35,18 +35,13 @@
   :type 'integer
   :group 'appkit)
 
-(defconst appkit-markup-codec-capabilities
-  '(heading bold italic underline strike code link quote list preformatted)
-  "Closed set of optional semantic capabilities declared by codecs.")
-
 (cl-defstruct (appkit-markup-codec
                (:constructor appkit-markup-codec--create)
                (:copier nil))
   (name nil :read-only t)
   (label nil :read-only t)
   (parse-function nil :read-only t)
-  (print-function nil :read-only t)
-  (capabilities nil :read-only t))
+  (print-function nil :read-only t))
 
 (cl-defstruct (appkit-markup-diagnostic
                (:constructor appkit-markup-diagnostic--create)
@@ -144,27 +139,19 @@
    :losses (copy-sequence losses)))
 
 (cl-defun appkit-markup-register-codec
-    (name &key parse print capabilities label)
+    (name &key parse print label)
   "Register source codec NAME and return its immutable descriptor.
 
-PARSE and PRINT are required synchronous functions.  CAPABILITIES is a
-duplicate-free subset of `appkit-markup-codec-capabilities'."
+PARSE and PRINT are required synchronous functions."
   (unless (and (symbolp name) name (functionp parse) (functionp print)
-               (or (null label) (stringp label))
-               (proper-list-p capabilities))
+               (or (null label) (stringp label)))
     (signal 'appkit-markup-codec-error '(invalid-registration)))
-  (dolist (capability capabilities)
-    (unless (memq capability appkit-markup-codec-capabilities)
-      (signal 'appkit-markup-codec-error '(unknown-capability))))
   (let ((codec
          (appkit-markup-codec--create
           :name name
           :label (substring-no-properties (or label (symbol-name name)))
           :parse-function parse
-          :print-function print
-          :capabilities
-          (seq-filter (lambda (capability) (memq capability capabilities))
-                      appkit-markup-codec-capabilities))))
+          :print-function print)))
     (puthash name codec appkit-markup-codec--registry)
     codec))
 
@@ -689,18 +676,6 @@ and records semantic loss."
      (appkit-markup-codec--restore-printed-objects
       (appkit-markup-print-result-source result) (cdr prepared))
      (appkit-markup-print-result-losses result))))
-
-(cl-defun appkit-markup-find-lossless-codec
-    (names document &key context object-printer)
-  "Return `(NAME . RESULT)' for the first lossless codec in NAMES."
-  (catch 'found
-    (dolist (name names)
-      (let ((result
-             (appkit-markup-print
-              name document
-              :context context :object-printer object-printer)))
-        (when (null (appkit-markup-print-result-losses result))
-          (throw 'found (cons name result)))))))
 
 (provide 'appkit-markup-codec)
 

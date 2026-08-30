@@ -45,8 +45,6 @@
   "Split normalized SOURCE while preserving every trailing empty line."
   (split-string source "\n" nil))
 
-
-
 (defun appkit-markup-codecs--plain-parse (source _context)
   "Parse literal SOURCE without interpreting formatting syntax."
   (let* ((plain (substring-no-properties source))
@@ -570,16 +568,13 @@
  'org
  :label "Org"
  :parse #'appkit-markup-codecs--org-parse
- :print #'appkit-markup-codecs--org-print
- :capabilities '(heading bold italic underline strike code link quote list
-                  preformatted))
+ :print #'appkit-markup-codecs--org-print)
 
 (appkit-markup-register-codec
  'markdown
  :label "Markdown"
  :parse #'appkit-markup-markdown-ts--parse
- :print #'appkit-markup-codecs--markdown-print
- :capabilities '(heading bold italic strike code link quote list preformatted))
+ :print #'appkit-markup-codecs--markdown-print)
 
 (provide 'appkit-markup-codecs)
 
