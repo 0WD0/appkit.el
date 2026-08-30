@@ -1,9 +1,10 @@
 #+title: Appkit compose surfaces
 #+options: toc:3 num:nil
 
-Appkit separates protocol-neutral editing authority from chat-specific
-multi-part geometry and source-markup interpretation.  The layers are
-implemented by ~appkit-compose.el~, ~appkit-chat-compose.el~, and
+Appkit separates protocol-neutral editing authority, owner-bound child
+editors, chat-specific multi-part geometry, and source-markup interpretation.
+The layers are implemented by ~appkit-compose.el~,
+~appkit-compose-edit.el~, ~appkit-chat-compose.el~, and
 ~appkit-markup-compose.el~ in Appkit 0.3.0.
 
 * Ownership
@@ -35,6 +36,31 @@ A /chat compose surface/ is the separate chatbuf-based multi-part editor.
 Committed parts are generated timeline rows and the trailing composer edits one
 current part.  It is suitable for social post threads; it is not a universal
 document editor or draft model.
+
+* Owner-bound child editor
+
+~appkit-compose-edit-buffer~ opens a temporary native-mode editor for one
+client-owned string:
+
+#+begin_src emacs-lisp
+(appkit-compose-edit-buffer
+ view initial-text
+ :mode #'emacs-lisp-mode
+ :buffer-name "*Client Code Block*"
+ :display-action '((display-buffer-below-selected))
+ :validation-function #'client-check-code)
+#+end_src
+
+The editor layers protocol-neutral finish keys (~C-c C-c~ and ~C-x C-s~) and
+cancel keys (~C-c C-k~ and ~C-c C-z~) over the selected major-mode map.  It
+returns the accepted property-free string or nil after cancellation.  Its
+buffer is an exact OWNER handle, so owner shutdown cancels the recursive edit
+and removes the buffer.
+
+Appkit does not select a language, compile the returned string into a document,
+or assign transport semantics.  The client supplies the mode, validation,
+content-free buffer name, display policy, and final structured-object or wire
+representation.
 
 * Generic compose session
 
@@ -119,7 +145,7 @@ Pure preview and provider output consume that same capture; neither rereads the
 live source.  A universal prefix may select another configured codec for one
 capture without changing the persistent active codec.  See
 [[file:markup.org][markup documents]] for parsing, printing, object fencing,
-source edits, and semantic-loss handling.
+codec selection, and semantic-loss handling.
 
 ** Compose operation
 
