@@ -61,9 +61,12 @@
 
 (ert-deftest appkit-markup-values-are-read-only-and-cycles-still-rejected ()
   (let ((paragraph (appkit-markup-paragraph nil)))
+    ;; Keep the invalid generalized-variable expansion at runtime so package
+    ;; compilation can build this negative test before ERT asserts the error.
     (should-error
-     (setf (appkit-markup-paragraph-children paragraph)
-           (list (appkit-markup-text "changed")))))
+     (eval
+      `(setf (appkit-markup-paragraph-children ',paragraph)
+             (list (appkit-markup-text "changed"))))))
   ;; Deliberate representation corruption remains rejected at the public
   ;; document boundary even though public accessors expose no setters.
   (let* ((blocks (list nil))

@@ -191,6 +191,26 @@
           #'ignore)))
       (should (string-empty-p (buffer-string))))))
 
+(ert-deftest appkit-markup-ui-link-factory-cannot-mutate-text-properties ()
+  (with-temp-buffer
+    (let ((document
+           (appkit-markup-document
+            (list
+             (appkit-markup-paragraph
+              (list
+               (appkit-markup-link
+                "https://example.test"
+                (list (appkit-markup-text "link")))))))))
+      (should-error
+       (appkit-markup-ui-insert-document
+        document
+        :interactive-p t
+        :link-action
+        (lambda (_url)
+          (put-text-property (point-min) (point-max) 'probe t)
+          #'ignore)))
+      (should (string-empty-p (buffer-string))))))
+
 (provide 'appkit-markup-ui-test)
 
 ;;; appkit-markup-ui-test.el ends here
