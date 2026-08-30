@@ -51,6 +51,22 @@
       (should-not (buffer-live-p editor))
       (should-not (appkit-view-handles view)))))
 
+(ert-deftest appkit-compose-edit-buffer-owner-stop-aborts-recursive-edit ()
+  "Stopping the exact owner should cancel and remove its active child editor."
+  (appkit-test-with-view
+    (let ((view (appkit-current-view))
+          editor)
+      (run-at-time 0 nil #'appkit-stop-app appkit-test-app)
+      (should-not
+       (appkit-compose-edit-buffer
+        view ""
+        :mode
+        (lambda ()
+          (interactive)
+          (text-mode)
+          (setq editor (current-buffer)))))
+      (should-not (buffer-live-p editor)))))
+
 (provide 'appkit-compose-edit-test)
 
 ;;; appkit-compose-edit-test.el ends here

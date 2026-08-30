@@ -202,7 +202,6 @@ A codec registration contains:
 
 - a parser from property-preserving source to a parse result;
 - a printer from a validated document to a print result;
-- declared semantic capabilities;
 - a human-readable label.
 
 The public registry and operation API is:
@@ -211,9 +210,7 @@ The public registry and operation API is:
 (appkit-markup-register-codec
  'provider-source
  :parse #'client-parse
- :print #'client-print
- :capabilities '(heading bold italic underline strike code link quote list
-                 preformatted))
+ :print #'client-print)
 
 (appkit-markup-parse 'org source
                      :context context
@@ -539,7 +536,7 @@ Completed across Appkit 0.3.0, emacs-zulip, and Disco:
 
 Remaining client migrations:
 
-8. Add Slackit's direct rich-text adapter and provider-exact output snapshot.
+8. [@8] Add Slackit's direct rich-text adapter and provider-exact output snapshot.
 9. Migrate remaining clients and delete obsolete parsers in the same clean
    cutovers.
 
@@ -548,7 +545,6 @@ Remaining client migrations:
 ** Appkit
 
 - Invalid trees are rejected without printing private values.
-- Every declared codec capability has a semantic parse/print round trip.
 - Malformed source recovers as literal text.
 - Equal adjacent structured objects remain distinct.
 - Semantic and side-channel classification neither loses nor duplicates an
