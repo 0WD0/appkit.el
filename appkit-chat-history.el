@@ -23,6 +23,7 @@
 (require 'cl-lib)
 (require 'seq)
 (require 'subr-x)
+(require 'appkit-scroll)
 
 (cl-defstruct (appkit-chat-history--state
                (:constructor appkit-chat-history--state-create))
@@ -323,13 +324,10 @@ mistaken for a discontinuity."
 THRESHOLD is a character distance; nil disables automatic paging.  The gate
 also requires a known window, no active request, and an older edge that is not
 known to be exhausted."
-  (and (numberp position)
-       (numberp start)
-       (numberp threshold)
+  (and (appkit-scroll-near-start-p position start threshold)
        (appkit-chat-history-window-known-p)
        (not (appkit-chat-history-loading-p))
-       (not (appkit-chat-history-older-loaded-p))
-       (< position (+ start (max 0 threshold)))))
+       (not (appkit-chat-history-older-loaded-p))))
 
 (cl-defun appkit-chat-history-autoload-newer-p
     (position end threshold &optional (allowed-p t))
@@ -340,13 +338,10 @@ lets a client suppress paging while its composer or another application-owned
 interaction is active.  The gate also requires a partial known window, no
 active request, and no recorded stall at its current exact newer edge."
   (and allowed-p
-       (numberp position)
-       (numberp end)
-       (numberp threshold)
+       (appkit-scroll-near-end-p position end threshold)
        (appkit-chat-history-window-partial-p)
        (not (appkit-chat-history-loading-p))
-       (not (appkit-chat-history-newer-stalled-p))
-       (> position (- end (max 0 threshold)))))
+       (not (appkit-chat-history-newer-stalled-p))))
 
 (cl-defun appkit-chat-history-delimiter-string
     (width &key loading-text
