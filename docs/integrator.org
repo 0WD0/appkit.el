@@ -236,6 +236,20 @@ A media attachment view is one item's preview, label, description, transfer
 state, and actions.  It is presentation, not the readable or displayable media
 resource and not a client attachment model.
 
+For row-sliced image montages, use
+~appkit-media-cropped-preview-image-from-file~ to center-crop a local file into
+an exact box.  Its optional ~(TOP RIGHT BOTTOM LEFT)~ transparent insets
+reserve pixel gutters without changing the box or its line-slice geometry.
+
+Use ~appkit-media-horizontal-strip-image~ when several files must remain one
+unbreakable display object.  It preserves a shared height, reserves explicit
+pixel gutters and missing-file geometry, and exposes each item as an image-map
+hot spot.  Items may override their display width, request center-cover instead
+of natural-ratio containment, and add the shared translucent circle-and-triangle
+video marker with ~:play-icon~.  The optional pixel offset moves the SVG
+~viewBox~ while keeping display width fixed; hot spots are clipped and
+translated into visible coordinates.
+
 Finite local audio playback uses ~appkit-media-player-start-file~.  One
 ~appkit-media-player-session~ owns its process, progress timer, pause/resume
 position, and optional Appkit owner handle.  Its lifecycle follows Telega's

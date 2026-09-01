@@ -31,6 +31,21 @@
   "Media rendering primitives for Appkit applications."
   :group 'appkit)
 
+(defcustom appkit-media-video-play-icon-radius-divisor 8.0
+  "Preview-height divisor used to derive the video play icon radius."
+  :type 'number
+  :group 'appkit-media)
+
+(defcustom appkit-media-video-play-icon-circle-opacity 0.65
+  "Opacity used for the black video play icon circle."
+  :type 'number
+  :group 'appkit-media)
+
+(defcustom appkit-media-video-play-icon-triangle-opacity 0.65
+  "Opacity used for the white video play icon triangle."
+  :type 'number
+  :group 'appkit-media)
+
 (defcustom appkit-media-inline-animation-enabled t
   "When non-nil, play bounded animated images inside rendered buffers."
   :type 'boolean
@@ -185,11 +200,13 @@ back to nil so applications can retain their ordinary square image path."
       (error nil))))
 
 (defun appkit-media--cropped-image-from-file
-    (file pixel-width pixel-height clip-id &optional radius)
+    (file pixel-width pixel-height clip-id &optional radius scalablep insets)
   "Return FILE center-cropped to a fixed image box.
 
 PIXEL-WIDTH and PIXEL-HEIGHT define the box.  CLIP-ID names its SVG clip
-path.  When RADIUS is non-nil, round the box corners by that many pixels."
+path.  When RADIUS is non-nil, round the box corners by that many pixels.
+When SCALABLEP is non-nil, preserve the box aspect ratio as its height changes.
+INSETS is an optional (TOP RIGHT BOTTOM LEFT) list of transparent pixels."
   (when (and (stringp file)
              (file-readable-p file)
              (numberp pixel-width)
@@ -206,21 +223,34 @@ path.  When RADIUS is non-nil, round the box corners by that many pixels."
         (when-let* ((mime-type (appkit-media-image-mime-type file)))
           (let* ((width (max 1 (round pixel-width)))
                  (height (max 1 (round pixel-height)))
+                 (raw-top (max 0 (round (or (nth 0 insets) 0))))
+                 (raw-right (max 0 (round (or (nth 1 insets) 0))))
+                 (raw-bottom (max 0 (round (or (nth 2 insets) 0))))
+                 (raw-left (max 0 (round (or (nth 3 insets) 0))))
+                 (top (min (1- height) raw-top))
+                 (left (min (1- width) raw-left))
+                 (right (min (- width left 1) raw-right))
+                 (bottom (min (- height top 1) raw-bottom))
+                 (content-width (- width left right))
+                 (content-height (- height top bottom))
                  (svg (svg-create width height))
                  (clip (svg-clip-path svg :id clip-id)))
             (if radius
-                (svg-rectangle clip 0 0 width height
+                (svg-rectangle clip left top content-width content-height
                                :rx radius :ry radius)
-              (svg-rectangle clip 0 0 width height))
+              (svg-rectangle clip left top content-width content-height))
             (svg-embed
              svg file mime-type nil
-             :x 0 :y 0 :width width :height height
+             :x left :y top :width content-width :height content-height
              :preserveAspectRatio "xMidYMid slice"
              :clip-path (format "url(#%s)" clip-id))
             (let ((image
-                   (svg-image
-                    svg :ascent 'center :width width :height height
-                    :scale 1.0)))
+                   (if scalablep
+                       (svg-image
+                        svg :ascent 'center :height height :scale 1.0)
+                     (svg-image
+                      svg :ascent 'center :width width :height height
+                      :scale 1.0))))
               (and (appkit-media-image-object-valid-p image) image))))
       (error nil))))
 
@@ -238,17 +268,18 @@ PIXEL-WIDTH and PIXEL-HEIGHT define the exact rounded output box."
     image))
 
 (defun appkit-media-cropped-preview-image-from-file
-    (file pixel-width pixel-height)
+    (file pixel-width pixel-height &optional insets)
   "Return FILE center-cropped to an exact preview box.
 
-PIXEL-WIDTH and PIXEL-HEIGHT specify the box at default text scale.  The
-returned descriptor records enough line slices to cover that height without
-distorting the source aspect ratio.  Return nil when SVG cropping is
-unavailable."
+PIXEL-WIDTH and PIXEL-HEIGHT specify the box at default text scale.  Optional
+INSETS is a (TOP RIGHT BOTTOM LEFT) list of transparent edge pixels.  The
+returned descriptor records enough line slices to cover the complete box
+height without distorting the source aspect ratio.  Return nil when SVG
+cropping is unavailable."
   (when-let* ((image
                (appkit-media--cropped-image-from-file
                 file pixel-width pixel-height
-                "appkit-cropped-preview-clip")))
+                "appkit-cropped-preview-clip" nil t insets)))
     (plist-put
      (cdr image) :appkit-media-nslices
      (max 1
@@ -256,6 +287,183 @@ unavailable."
            (/ (float (max 1 pixel-height))
               (float (appkit-media--base-char-pixel-height))))))
     image))
+
+(defun appkit-media-append-video-play-icon
+    (svg width height &optional origin-x origin-y)
+  "Append a centered play icon to SVG within WIDTH and HEIGHT.
+
+ORIGIN-X and ORIGIN-Y position the box within a larger SVG."
+  (when (and (fboundp 'svg-circle) (fboundp 'svg-polygon))
+    (let* ((x (or origin-x 0))
+           (y (or origin-y 0))
+           (center-x (+ x (/ width 2.0)))
+           (center-y (+ y (/ height 2.0)))
+           (radius (/ height
+                      (max 0.1
+                           (float
+                            appkit-media-video-play-icon-radius-divisor))))
+           (offset (/ radius 8.0))
+           (left (+ x offset (/ (- width radius) 2.0)))
+           (right (+ x offset (/ (+ width radius) 2.0)))
+           (top (+ y (/ (- height radius) 2.0)))
+           (bottom (+ y (/ (+ height radius) 2.0))))
+      (svg-circle
+       svg center-x center-y radius
+       :fill "#000000"
+       :fill-opacity appkit-media-video-play-icon-circle-opacity)
+      (svg-polygon
+       svg
+       (list (cons left top) (cons left bottom) (cons right center-y))
+       :fill "#ffffff"
+       :fill-opacity appkit-media-video-play-icon-triangle-opacity))))
+
+(defun appkit-media--horizontal-strip-item-ratio (item)
+  "Return ITEM's positive aspect ratio, or 1.0."
+  (let* ((file (plist-get item :file))
+         (declared-width (plist-get item :width))
+         (declared-height (plist-get item :height))
+         (file-size
+          (and (not (and (numberp declared-width)
+                         (numberp declared-height)))
+               file
+               (appkit-media--image-file-size-pixels file)))
+         (width (or declared-width (car-safe file-size)))
+         (height (or declared-height (cdr-safe file-size))))
+    (if (and (numberp width) (> width 0)
+             (numberp height) (> height 0))
+        (/ (float width) height)
+      1.0)))
+
+(defun appkit-media-horizontal-strip-plan
+    (items pixel-height pixel-gap &optional pixel-offset)
+  "Return backend-neutral horizontal scene geometry for ITEMS.
+
+Each item is a plist accepted by `appkit-media-horizontal-strip-image'.
+PIXEL-HEIGHT fixes the scene height, PIXEL-GAP separates items, and optional
+PIXEL-OFFSET identifies the scene x coordinate at the viewport's left edge.
+The returned plist contains `:width', `:height', `:gap', `:offset', and
+`:items'.  Each planned item retains its source plist and has integer `:x',
+`:width', and `:id' values."
+  (when (and items
+             (numberp pixel-height)
+             (> pixel-height 0)
+             (numberp pixel-gap)
+             (>= pixel-gap 0)
+             (or (null pixel-offset) (numberp pixel-offset)))
+    (let* ((height (max 1 (round pixel-height)))
+           (gap (max 0 (round pixel-gap)))
+           (geometry
+            (cl-loop for item in items
+                     for index from 0
+                     for display-width = (plist-get item :display-width)
+                     for width = (max
+                                  1
+                                  (round
+                                   (if (and (numberp display-width)
+                                            (> display-width 0))
+                                       display-width
+                                     (* height
+                                        (appkit-media--horizontal-strip-item-ratio
+                                         item)))))
+                     collect
+                     (list :item item
+                           :id (or (plist-get item :id) index)
+                           :width width)))
+           (strip-width
+            (+ (apply #'+ (mapcar (lambda (cell)
+                                   (plist-get cell :width))
+                                 geometry))
+               (* gap (1- (length geometry)))))
+           (offset
+            (min (max 0 (round (or pixel-offset 0)))
+                 (max 0 (1- strip-width))))
+           (x 0))
+      (dolist (cell geometry)
+        (plist-put cell :x x)
+        (setq x (+ x (plist-get cell :width) gap)))
+      (list :width strip-width
+            :height height
+            :gap gap
+            :offset offset
+            :items geometry))))
+
+(defun appkit-media-horizontal-strip-image
+    (items pixel-height pixel-gap &optional pixel-offset)
+  "Return ITEMS rendered from backend-neutral horizontal scene geometry.
+
+Each item may contain `:file', `:width', `:height', `:id', `:display-width',
+`:fit', and `:play-icon'.  Optional PIXEL-OFFSET moves that scene x coordinate
+to the left edge without changing the display width.  Item IDs become image
+map hot spots in visible coordinates.  Return nil when SVG is unavailable."
+  (when (and (image-type-available-p 'svg)
+             (fboundp 'svg-create)
+             (fboundp 'svg-embed)
+             (fboundp 'svg-image))
+    (condition-case nil
+        (when-let* ((plan
+                     (appkit-media-horizontal-strip-plan
+                      items pixel-height pixel-gap pixel-offset)))
+          (let* ((height (plist-get plan :height))
+                 (strip-width (plist-get plan :width))
+                 (offset (plist-get plan :offset))
+                 (geometry (plist-get plan :items))
+                 (svg
+                  (svg-create
+                   strip-width height
+                   :viewBox
+                   (format "%d 0 %d %d"
+                           offset strip-width height)))
+                 image-map)
+            (dolist (cell geometry)
+              (let* ((item (plist-get cell :item))
+                     (file (plist-get item :file))
+                     (x (plist-get cell :x))
+                     (width (plist-get cell :width))
+                     (id (plist-get cell :id))
+                     (map-left (max 0 (- x offset)))
+                     (map-right
+                      (min strip-width (- (+ x width) offset)))
+                     (mime-type
+                      (and (stringp file)
+                           (file-readable-p file)
+                           (appkit-media-image-mime-type file))))
+                (when mime-type
+                  (svg-embed
+                   svg file mime-type nil
+                   :x x :y 0 :width width :height height
+                   :preserveAspectRatio
+                   (if (eq (plist-get item :fit) 'cover)
+                       "xMidYMid slice"
+                     "xMidYMid meet"))
+                  (when (plist-get item :play-icon)
+                    (appkit-media-append-video-play-icon
+                     svg width height x 0)))
+                (when (< map-left map-right)
+                  (push
+                   (list
+                    `(rect
+                      . ((,map-left . 0) . (,map-right . ,height)))
+                    id
+                    '(:pointer hand :help-echo "Open media"))
+                   image-map))))
+            (let ((image
+                   (svg-image
+                    svg :ascent 'center :height height :scale 1.0
+                    :map (nreverse image-map))))
+              (when (appkit-media-image-object-valid-p image)
+                (plist-put
+                 (cdr image) :appkit-media-nslices
+                 (max 1
+                      (ceiling
+                       (/ (float height)
+                          (float (appkit-media--base-char-pixel-height))))))
+                (plist-put
+                 (cdr image) :appkit-media-strip-widths
+                 (mapcar (lambda (cell) (plist-get cell :width)) geometry))
+                (plist-put
+                 (cdr image) :appkit-media-strip-offset offset)
+                image))))
+      (error nil))))
 
 (defun appkit-media--file-size (file)
   "Return FILE size in bytes, or nil when it is unavailable."
@@ -482,12 +690,17 @@ text.  Return FALLBACK unchanged when IMAGE is nil."
     (appkit-media--start-window-inline-animations window)))
 
 (defun appkit-media--image-with-pixel-height (image pixel-height)
-  "Return a copy of IMAGE whose `:height' is PIXEL-HEIGHT.
+  "Return IMAGE displayed at PIXEL-HEIGHT.
 
-The original IMAGE is not mutated, so cached `:height Nch' descriptors
-stay reusable after `text-scale-mode'."
-  (let ((properties (copy-sequence (cdr-safe image))))
-    (cons 'image (plist-put properties :height pixel-height))))
+Canvas descriptors retain their object identity because Emacs associates their
+mutable pixel buffers by `eq'.  Other image descriptors are copied so cached
+`:height Nch' values remain reusable after `text-scale-mode'."
+  (if (eq (plist-get (cdr-safe image) :type) 'canvas)
+      (progn
+        (plist-put (cdr image) :height pixel-height)
+        image)
+    (let ((properties (copy-sequence (cdr-safe image))))
+      (cons 'image (plist-put properties :height pixel-height)))))
 
 (defun appkit-media--line-slice-geometry (image)
   "Return (RENDER-IMAGE SLICE-COUNT SLICE-HEIGHT) for displaying IMAGE.
