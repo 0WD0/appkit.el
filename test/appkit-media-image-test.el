@@ -161,7 +161,215 @@
           "url(#appkit-cropped-preview-clip)"))
         (should
          (equal image-properties
-                '(:ascent center :width 40 :height 60 :scale 1.0)))))))
+                '(:ascent center :height 60 :scale 1.0)))))))
+
+(ert-deftest appkit-media-cropped-preview-keeps-transparent-insets ()
+  "Insets should reserve montage gutters without changing the outer box."
+  (let (rectangle-call embed-call image-properties)
+    (cl-letf (((symbol-function 'file-readable-p) (lambda (_file) t))
+              ((symbol-function 'image-type-available-p)
+               (lambda (type) (eq type 'svg)))
+              ((symbol-function 'appkit-media-image-mime-type)
+               (lambda (_file) "image/jpeg"))
+              ((symbol-function 'appkit-media--base-char-pixel-height)
+               (lambda () 20))
+              ((symbol-function 'svg-create)
+               (lambda (width height) (list :svg width height)))
+              ((symbol-function 'svg-clip-path)
+               (lambda (_svg &rest _properties) :clip))
+              ((symbol-function 'svg-rectangle)
+               (lambda (&rest arguments)
+                 (setq rectangle-call arguments)))
+              ((symbol-function 'svg-embed)
+               (lambda (&rest arguments)
+                 (setq embed-call arguments)))
+              ((symbol-function 'svg-image)
+               (lambda (_svg &rest properties)
+                 (setq image-properties properties)
+                 '(image :type svg :data "thumbnail")))
+              ((symbol-function 'appkit-media-image-object-valid-p)
+               (lambda (_image) t)))
+      (let ((image
+             (appkit-media-cropped-preview-image-from-file
+              "/tmp/source.jpg" 40 60 '(1 2 3 4))))
+        (should (= 3 (plist-get (cdr image) :appkit-media-nslices)))
+        (should (equal rectangle-call '(:clip 4 1 34 56)))
+        (should
+         (equal
+          (seq-take (nthcdr 4 embed-call) 8)
+          '(:x 4 :y 1 :width 34 :height 56)))
+        (should
+         (equal image-properties
+                '(:ascent center :height 60 :scale 1.0)))))))
+
+(ert-deftest appkit-media-horizontal-strip-preserves-item-ratios ()
+  "A strip should compose and pan natural-ratio items in one mapped SVG."
+  (let (embed-calls image-properties svg-properties)
+    (cl-letf (((symbol-function 'file-readable-p) (lambda (_file) t))
+              ((symbol-function 'image-type-available-p)
+               (lambda (type) (eq type 'svg)))
+              ((symbol-function 'appkit-media-image-mime-type)
+               (lambda (_file) "image/png"))
+              ((symbol-function 'appkit-media--base-char-pixel-height)
+               (lambda () 20))
+              ((symbol-function 'svg-create)
+               (lambda (width height &rest properties)
+                 (setq svg-properties properties)
+                 (list :svg width height)))
+              ((symbol-function 'svg-embed)
+               (lambda (&rest arguments)
+                 (push arguments embed-calls)))
+              ((symbol-function 'svg-image)
+               (lambda (_svg &rest properties)
+                 (setq image-properties properties)
+                 '(image :type svg :data "strip")))
+              ((symbol-function 'appkit-media-image-object-valid-p)
+               (lambda (_image) t)))
+      (let ((items
+             '((:file "/tmp/a.png" :width 1 :height 2 :id first)
+               (:file "/tmp/b.png" :width 2 :height 1 :id second))))
+        (let ((image
+               (appkit-media-horizontal-strip-image items 40 8)))
+          (should (= 2 (plist-get (cdr image) :appkit-media-nslices)))
+          (should
+           (equal (plist-get (cdr image) :appkit-media-strip-widths)
+                  '(20 80)))
+          (should (= 0 (plist-get (cdr image)
+                                  :appkit-media-strip-offset)))
+          (should (equal svg-properties
+                         '(:viewBox "0 0 108 40")))
+          (should
+           (equal
+            (mapcar (lambda (call)
+                      (seq-take (nthcdr 4 call) 8))
+                    (nreverse embed-calls))
+            '((:x 0 :y 0 :width 20 :height 40)
+              (:x 28 :y 0 :width 80 :height 40))))
+          (let ((image-map (plist-get image-properties :map)))
+            (should (equal (mapcar #'cadr image-map) '(first second)))
+            (should
+             (equal (mapcar #'car image-map)
+                    '((rect . ((0 . 0) . (20 . 40)))
+                      (rect . ((28 . 0) . (108 . 40))))))))
+        (let ((image
+               (appkit-media-horizontal-strip-image items 40 8 28)))
+          (should (= 28 (plist-get (cdr image)
+                                   :appkit-media-strip-offset)))
+          (should (equal svg-properties
+                         '(:viewBox "28 0 108 40")))
+          (should
+           (equal (plist-get image-properties :map)
+                  '(((rect . ((0 . 0) . (80 . 40)))
+                     second
+                     (:pointer hand :help-echo "Open media"))))))))))
+
+(ert-deftest appkit-media-horizontal-strip-supports-cover-boxes ()
+  "A strip item may override its width and cover that box."
+  (let (embed-call)
+    (cl-letf (((symbol-function 'file-readable-p) (lambda (_file) t))
+              ((symbol-function 'image-type-available-p)
+               (lambda (type) (eq type 'svg)))
+              ((symbol-function 'appkit-media-image-mime-type)
+               (lambda (_file) "image/png"))
+              ((symbol-function 'appkit-media--base-char-pixel-height)
+               (lambda () 20))
+              ((symbol-function 'svg-create)
+               (lambda (width height &rest _properties)
+                 (list :svg width height)))
+              ((symbol-function 'svg-embed)
+               (lambda (&rest arguments)
+                 (setq embed-call arguments)))
+              ((symbol-function 'svg-image)
+               (lambda (&rest _arguments)
+                 '(image :type svg :data "strip")))
+              ((symbol-function 'appkit-media-image-object-valid-p)
+               (lambda (_image) t)))
+      (let ((image
+             (appkit-media-horizontal-strip-image
+              '((:file "/tmp/a.png" :width 2 :height 1
+                 :display-width 30 :fit cover))
+              40 4)))
+        (should
+         (equal (plist-get (cdr image) :appkit-media-strip-widths)
+                '(30)))
+        (should
+         (equal (seq-drop embed-call 4)
+                '(:x 0 :y 0 :width 30 :height 40
+                  :preserveAspectRatio "xMidYMid slice")))))))
+
+(ert-deftest appkit-media-horizontal-strip-plan-is-renderer-independent ()
+  "Strip geometry should be reusable without constructing an SVG."
+  (let* ((items '((:id first :display-width 30)
+                  (:id second :display-width 50)))
+         (plan (appkit-media-horizontal-strip-plan items 40 4 34))
+         (cells (plist-get plan :items)))
+    (should (= (plist-get plan :width) 84))
+    (should (= (plist-get plan :height) 40))
+    (should (= (plist-get plan :gap) 4))
+    (should (= (plist-get plan :offset) 34))
+    (should (eq (plist-get (car cells) :item) (car items)))
+    (should
+     (equal
+      (mapcar (lambda (cell)
+                (list (plist-get cell :id)
+                      (plist-get cell :x)
+                      (plist-get cell :width)))
+              cells)
+      '((first 0 30) (second 34 50))))))
+
+(ert-deftest appkit-media-play-icon-draws-translucent-circle-and-triangle ()
+  "The shared play marker should honor an item's position in a larger SVG."
+  (let ((appkit-media-video-play-icon-radius-divisor 8.0)
+        (appkit-media-video-play-icon-circle-opacity 0.65)
+        (appkit-media-video-play-icon-triangle-opacity 0.65)
+        circle-call
+        polygon-call)
+    (cl-letf (((symbol-function 'svg-circle)
+               (lambda (&rest arguments)
+                 (setq circle-call arguments)))
+              ((symbol-function 'svg-polygon)
+               (lambda (&rest arguments)
+                 (setq polygon-call arguments))))
+      (appkit-media-append-video-play-icon :svg 40 24 100 10))
+    (should
+     (equal circle-call
+            '(:svg 120.0 22.0 3.0
+              :fill "#000000" :fill-opacity 0.65)))
+    (should
+     (equal polygon-call
+            '(:svg
+              ((118.875 . 20.5)
+               (118.875 . 23.5)
+               (121.875 . 22.0))
+              :fill "#ffffff" :fill-opacity 0.65)))))
+
+(ert-deftest appkit-media-horizontal-strip-adds-item-play-icon ()
+  "A strip should place the play marker over only its video item."
+  (let (play-call)
+    (cl-letf (((symbol-function 'file-readable-p) (lambda (_file) t))
+              ((symbol-function 'image-type-available-p)
+               (lambda (type) (eq type 'svg)))
+              ((symbol-function 'appkit-media-image-mime-type)
+               (lambda (_file) "image/png"))
+              ((symbol-function 'appkit-media--base-char-pixel-height)
+               (lambda () 20))
+              ((symbol-function 'svg-create)
+               (lambda (width height &rest _properties)
+                 (list :svg width height)))
+              ((symbol-function 'svg-embed) #'ignore)
+              ((symbol-function 'appkit-media-append-video-play-icon)
+               (lambda (&rest arguments)
+                 (setq play-call arguments)))
+              ((symbol-function 'svg-image)
+               (lambda (&rest _arguments)
+                 '(image :type svg :data "strip")))
+              ((symbol-function 'appkit-media-image-object-valid-p)
+               (lambda (_image) t)))
+      (appkit-media-horizontal-strip-image
+       '((:file "/tmp/photo.png" :width 1 :height 1)
+         (:file "/tmp/video.png" :width 1 :height 1 :play-icon t))
+       20 4))
+    (should (equal play-call '((:svg 44 20) 20 20 24 0)))))
 
 (ert-deftest appkit-media-one-line-preview-defaults-to-two-character-columns ()
   "The default thumbnail must not expand to the full media preview width."
@@ -565,6 +773,22 @@
                                    (list 'slice 0 (* index 10) 1.0 10)))
                  do (should (= (plist-get (cdr (cadr display)) :height)
                                30)))))))
+
+(ert-deftest appkit-media-canvas-slice-rows-preserve-descriptor-identity ()
+  "Canvas slices must display the descriptor whose mutable buffer is updated."
+  (let ((canvas '(image :type canvas :id test-canvas
+                        :data-width 120 :data-height 30
+                        :appkit-media-nslices 3)))
+    (cl-letf (((symbol-function 'appkit-media-image-object-valid-p)
+               (lambda (_image) nil))
+              ((symbol-function 'appkit-media--char-pixel-height)
+               (lambda () 10)))
+      (let ((rows (appkit-media-image-slice-rows canvas)))
+        (should (= (length rows) 3))
+        (dolist (row rows)
+          (should (eq (cadr (get-text-property 0 'display row))
+                      canvas)))
+        (should (= (plist-get (cdr canvas) :height) 30))))))
 
 (ert-deftest appkit-media-insert-image-slices-sizes-copy-to-current-line ()
   "Insertion must not rewrite a cached `:height Nch' descriptor."
