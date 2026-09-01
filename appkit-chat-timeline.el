@@ -25,6 +25,7 @@
 (require 'appkit-projection)
 (require 'appkit-position)
 (require 'appkit-core)
+(require 'appkit-scroll)
 
 (cl-defstruct (appkit-chat-timeline-row
                (:include appkit-projection-row)
@@ -188,13 +189,8 @@ decisions without treating application-owned input as timeline content.
 
 Unlike point, this value follows mouse-wheel, scroll-bar, and indirect-window
 scrolling even when those operations leave the window point unchanged."
-  (when (and (window-live-p window)
-             (eq (window-buffer window) (current-buffer)))
-    (when-let* ((visible-end (window-end window t)))
-      (let ((footer (appkit-chat-timeline-footer-start-position)))
-        (if (numberp footer)
-            (min visible-end footer)
-          visible-end)))))
+  (appkit-scroll-window-visible-end-position
+   window (appkit-chat-timeline-footer-start-position)))
 
 (defun appkit-chat-timeline--position-zone-state (position preserve-window-start)
   "Capture semantic state for POSITION in the current timeline.
