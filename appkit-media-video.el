@@ -26,21 +26,6 @@
   :type 'integer
   :group 'appkit-media)
 
-(defcustom appkit-media-video-play-icon-radius-divisor 8.0
-  "Preview-height divisor used to derive the video play icon radius."
-  :type 'number
-  :group 'appkit-media)
-
-(defcustom appkit-media-video-play-icon-circle-opacity 0.65
-  "Opacity used for the black video play icon circle."
-  :type 'number
-  :group 'appkit-media)
-
-(defcustom appkit-media-video-play-icon-triangle-opacity 0.65
-  "Opacity used for the white video play icon triangle."
-  :type 'number
-  :group 'appkit-media)
-
 (cl-defstruct (appkit-media--video-preview-job
                (:constructor appkit-media--video-preview-job-create))
   process
@@ -279,30 +264,6 @@ and its TARGET-FILE, or two nil values when extraction fails."
       (when-let* ((value (plist-get properties property)))
         (setq result (plist-put result property value))))
     (plist-put result :appkit-media-nslices slices)))
-
-(defun appkit-media-append-video-play-icon (svg width height)
-  "Append a centered play icon to SVG of WIDTH and HEIGHT."
-  (when (and (fboundp 'svg-circle) (fboundp 'svg-polygon))
-    (let* ((center-x (/ width 2.0))
-           (center-y (/ height 2.0))
-           (radius (/ height
-                      (max 0.1
-                           (float
-                            appkit-media-video-play-icon-radius-divisor))))
-           (offset (/ radius 8.0))
-           (left (+ offset (/ (- width radius) 2.0)))
-           (right (+ offset (/ (+ width radius) 2.0)))
-           (top (/ (- height radius) 2.0))
-           (bottom (/ (+ height radius) 2.0)))
-      (svg-circle
-       svg center-x center-y radius
-       :fill "#000000"
-       :fill-opacity appkit-media-video-play-icon-circle-opacity)
-      (svg-polygon
-       svg
-       (list (cons left top) (cons left bottom) (cons right center-y))
-       :fill "#ffffff"
-       :fill-opacity appkit-media-video-play-icon-triangle-opacity))))
 
 (defun appkit-media--svg-to-image (svg properties)
   "Create an image object from SVG using PROPERTIES."
