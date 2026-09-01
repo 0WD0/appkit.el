@@ -26,6 +26,7 @@
 (require 'appkit-ewoc)
 (require 'appkit-invalidation)
 (require 'appkit-projection)
+(require 'appkit-scroll)
 (require 'appkit-compose)
 (require 'appkit-compose-edit)
 (require 'appkit-chat-compose)
