@@ -184,13 +184,12 @@ back to nil so applications can retain their ordinary square image path."
               (and (appkit-media-image-object-valid-p image) image))))
       (error nil))))
 
-(defun appkit-media--one-line-thumbnail-from-file
-    (file pixel-width pixel-height)
-  "Return FILE center-cropped to a one-line thumbnail.
+(defun appkit-media--cropped-image-from-file
+    (file pixel-width pixel-height clip-id &optional radius)
+  "Return FILE center-cropped to a fixed image box.
 
-PIXEL-WIDTH and PIXEL-HEIGHT are the exact output box.  The source is
-embedded in an SVG so a large source image cannot escape the compact
-container's geometry."
+PIXEL-WIDTH and PIXEL-HEIGHT define the box.  CLIP-ID names its SVG clip
+path.  When RADIUS is non-nil, round the box corners by that many pixels."
   (when (and (stringp file)
              (file-readable-p file)
              (numberp pixel-width)
@@ -207,25 +206,56 @@ container's geometry."
         (when-let* ((mime-type (appkit-media-image-mime-type file)))
           (let* ((width (max 1 (round pixel-width)))
                  (height (max 1 (round pixel-height)))
-                 (radius (max 1 (/ (min width height) 5.0)))
                  (svg (svg-create width height))
-                 (clip
-                  (svg-clip-path
-                   svg :id "appkit-one-line-thumbnail-clip")))
-            (svg-rectangle clip 0 0 width height :rx radius :ry radius)
+                 (clip (svg-clip-path svg :id clip-id)))
+            (if radius
+                (svg-rectangle clip 0 0 width height
+                               :rx radius :ry radius)
+              (svg-rectangle clip 0 0 width height))
             (svg-embed
              svg file mime-type nil
              :x 0 :y 0 :width width :height height
              :preserveAspectRatio "xMidYMid slice"
-             :clip-path "url(#appkit-one-line-thumbnail-clip)")
+             :clip-path (format "url(#%s)" clip-id))
             (let ((image
                    (svg-image
                     svg :ascent 'center :width width :height height
                     :scale 1.0)))
-              (when (appkit-media-image-object-valid-p image)
-                (plist-put (cdr image) :appkit-media-nslices 1)
-                image))))
+              (and (appkit-media-image-object-valid-p image) image))))
       (error nil))))
+
+(defun appkit-media--one-line-thumbnail-from-file
+    (file pixel-width pixel-height)
+  "Return FILE center-cropped to a compact one-line thumbnail.
+
+PIXEL-WIDTH and PIXEL-HEIGHT define the exact rounded output box."
+  (when-let* ((radius (max 1 (/ (min pixel-width pixel-height) 5.0)))
+              (image
+               (appkit-media--cropped-image-from-file
+                file pixel-width pixel-height
+                "appkit-one-line-thumbnail-clip" radius)))
+    (plist-put (cdr image) :appkit-media-nslices 1)
+    image))
+
+(defun appkit-media-cropped-preview-image-from-file
+    (file pixel-width pixel-height)
+  "Return FILE center-cropped to an exact preview box.
+
+PIXEL-WIDTH and PIXEL-HEIGHT specify the box at default text scale.  The
+returned descriptor records enough line slices to cover that height without
+distorting the source aspect ratio.  Return nil when SVG cropping is
+unavailable."
+  (when-let* ((image
+               (appkit-media--cropped-image-from-file
+                file pixel-width pixel-height
+                "appkit-cropped-preview-clip")))
+    (plist-put
+     (cdr image) :appkit-media-nslices
+     (max 1
+          (ceiling
+           (/ (float (max 1 pixel-height))
+              (float (appkit-media--base-char-pixel-height))))))
+    image))
 
 (defun appkit-media--file-size (file)
   "Return FILE size in bytes, or nil when it is unavailable."
@@ -668,19 +698,21 @@ Display is a separate step: call `appkit-media-insert-image-slices' or
          (appkit-media--mark-inline-animation-image image file))))
 
 (defun appkit-media-one-line-preview-image-from-file (file &optional max-width)
-  "Create a bounded one-row thumbnail for local FILE.
+  "Create a compact one-row thumbnail for local FILE.
 
-MAX-WIDTH is the rendered pixel width and defaults to
-`appkit-media-preview-max-width'.  A graphical display uses a fixed-size,
-center-cropped SVG thumbnail like Telega's one-line previews.  Displays
-without SVG support retain the ordinary image decoder with explicit
-one-line height and maximum-width constraints.
+MAX-WIDTH is the rendered pixel width.  It defaults to two current character
+columns, capped by `appkit-media-preview-max-width', following Telega's
+two-column, one-line thumbnail geometry.  A graphical display uses a fixed-size
+center-cropped SVG thumbnail.  Displays without SVG support retain the ordinary
+image decoder with explicit one-line height and maximum-width constraints.
 
 Display with `appkit-media-one-line-image-display-string'."
   (let* ((safe-max-width
-          (max 1 (if (numberp max-width)
-                     max-width
-                   appkit-media-preview-max-width)))
+          (max 1
+               (if (numberp max-width)
+                   max-width
+                 (min appkit-media-preview-max-width
+                      (* 2 (appkit-media--char-pixel-width))))))
          (line-height (appkit-media--base-char-pixel-height)))
     (or (appkit-media--one-line-thumbnail-from-file
          file safe-max-width line-height)

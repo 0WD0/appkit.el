@@ -117,6 +117,71 @@
          (equal image-properties
                 '(:ascent center :width 40 :height 20 :scale 1.0)))))))
 
+(ert-deftest appkit-media-cropped-preview-fills-a-fixed-multiline-box ()
+  "Cropped previews should cover one exact box with stable slice metadata."
+  (let (rectangle-call embed-call image-properties)
+    (cl-letf (((symbol-function 'file-readable-p) (lambda (_file) t))
+              ((symbol-function 'image-type-available-p)
+               (lambda (type) (eq type 'svg)))
+              ((symbol-function 'appkit-media-image-mime-type)
+               (lambda (_file) "image/jpeg"))
+              ((symbol-function 'appkit-media--base-char-pixel-height)
+               (lambda () 20))
+              ((symbol-function 'svg-create)
+               (lambda (width height) (list :svg width height)))
+              ((symbol-function 'svg-clip-path)
+               (lambda (_svg &rest _properties) :clip))
+              ((symbol-function 'svg-rectangle)
+               (lambda (&rest arguments)
+                 (setq rectangle-call arguments)))
+              ((symbol-function 'svg-embed)
+               (lambda (&rest arguments)
+                 (setq embed-call arguments)))
+              ((symbol-function 'svg-image)
+               (lambda (_svg &rest properties)
+                 (setq image-properties properties)
+                 '(image :type svg :data "thumbnail")))
+              ((symbol-function 'appkit-media-image-object-valid-p)
+               (lambda (_image) t)))
+      (let ((image
+             (appkit-media-cropped-preview-image-from-file
+              "/tmp/source.jpg" 40 60)))
+        (should (= 3 (plist-get (cdr image) :appkit-media-nslices)))
+        (should (equal rectangle-call '(:clip 0 0 40 60)))
+        (should
+         (equal (seq-take embed-call 4)
+                '((:svg 40 60) "/tmp/source.jpg" "image/jpeg" nil)))
+        (should
+         (equal
+          (plist-get (nthcdr 4 embed-call) :preserveAspectRatio)
+          "xMidYMid slice"))
+        (should
+         (equal
+          (plist-get (nthcdr 4 embed-call) :clip-path)
+          "url(#appkit-cropped-preview-clip)"))
+        (should
+         (equal image-properties
+                '(:ascent center :width 40 :height 60 :scale 1.0)))))))
+
+(ert-deftest appkit-media-one-line-preview-defaults-to-two-character-columns ()
+  "The default thumbnail must not expand to the full media preview width."
+  (let ((appkit-media-preview-max-width 460)
+        geometry)
+    (cl-letf
+        (((symbol-function 'appkit-media--char-pixel-width)
+          (lambda () 9))
+         ((symbol-function 'appkit-media--base-char-pixel-height)
+          (lambda () 21))
+         ((symbol-function 'appkit-media--one-line-thumbnail-from-file)
+          (lambda (file width height)
+            (setq geometry (list file width height))
+            'thumbnail)))
+      (should
+       (eq 'thumbnail
+           (appkit-media-one-line-preview-image-from-file
+            "/tmp/source.png")))
+      (should (equal geometry '("/tmp/source.png" 18 21))))))
+
 (ert-deftest appkit-media-marks-only-bounded-multi-frame-previews ()
   (let ((appkit-media-inline-animation-enabled t)
         (appkit-media-inline-animation-max-duration 10)
