@@ -227,11 +227,11 @@ starting asynchronous work.
 
 ** Media
 
-Callers adapt backend objects into canonical resource descriptors and
-explicit preview metadata.  Appkit owns HTTPS-only atomic acquisition for
-explicit image and file transfers, byte-level image cache finalization,
-lifecycle-bound open transfers and video viewer buffers, and
-protocol-restricted preview and audio-player processes.
+Callers adapt backend objects into canonical resource descriptors and explicit
+preview metadata.  Appkit owns HTTPS-only atomic acquisition for explicit
+image and file transfers, byte-level image cache finalization, lifecycle-bound
+video sessions and presentation surfaces, and protocol-restricted preview and
+audio-player processes.
 
 A media attachment view is one item's preview, label, description, transfer
 state, and actions.  It is presentation, not the readable or displayable media
@@ -251,25 +251,44 @@ video marker with ~:play-icon~.  The optional pixel offset moves the SVG
 ~viewBox~ while keeping display width fixed; hot spots are clipped and
 translated into visible coordinates.
 
-Local files and HTTPS video URLs go through
-~appkit-media-play-video-source~.  Remote playback starts immediately through
-~video.el~ and remains range-seekable; it never waits for a full attachment
-download.  GStreamer's sparse progressive buffer belongs to that player
-session.  Under the default ~automatic~ cache policy, Appkit gives video.el an
-atomic destination under ~appkit-media-video-cache-directory~ and retains the
-buffer only when it naturally becomes complete.  Existing complete entries are
-opened locally.  ~:cache-policy 'none~ leaves all buffering session-local.
+Use ~appkit-media-video-session-create~ when an application may present one
+video in more than one place.  The Appkit wrapper owns the canonical resource,
+stable cache identity, cache policy, and cache-completion update; its embedded
+video.el ~video-session~ owns the single player and presentation leases.
+Sessions are intentionally not globally deduplicated by cache key: separate
+user activations have independent playback state.
 
-Clients should provide a stable ~:cache-key~ based on protocol resource
-identity so rotating signed URLs address the same complete cache.  A cache is
-transparent and may remain incomplete; an explicit download is a separate
-user action implemented with ~appkit-media-copy-or-download-resource-async~.
+Create an in-buffer surface with ~appkit-media-video-inline-create~.  Promote
+that exact surface with ~appkit-media-present-video-inline~, or present its
+Appkit session with ~appkit-media-present-video-session~.  Both paths retain
+one video.el session, so playback position, desired play/pause state, canonical
+mute, rate, buffering ranges, and sparse network cache remain continuous.
+Closing either surface does not interrupt the other; video.el closes the player
+after its last inline or dedicated lease disappears.  A client's optional
+~:close-function~ runs exactly once after video.el retires the inline surface.
 
-The optional app or view owner owns the Canvas viewer buffer.  Killing the
-viewer retires its owner handle; stopping the owner closes playback and removes
-an incomplete session cache.  ~video.el~ remains authoritative for decoding,
-range requests, buffered intervals, waiting UI, transport, and
-~video-display-buffer-function~.  Clients must not spawn another video player.
+~appkit-media-play-video-source~ remains the one-call dedicated-viewer
+convenience API.  Remote playback starts immediately through video.el and
+remains range-seekable; it never waits for a full attachment download.  Under
+the default ~automatic~ cache policy, Appkit gives video.el an atomic
+destination under ~appkit-media-video-cache-directory~ and retains the sparse
+progressive buffer only when it naturally becomes complete.  Existing complete
+entries are opened locally.  ~:cache-policy 'none~ leaves all buffering
+session-local.
+
+Clients provide a stable ~:cache-key~ based on protocol resource identity so
+rotating signed URLs address the same complete cache.  A cache is transparent
+and may remain incomplete; an explicit download is a separate user action
+implemented with ~appkit-media-copy-or-download-resource-async~.
+
+The boundary is strict: video.el owns GStreamer, canonical player state,
+temporary sparse buffering, render targets, Canvas transport, waiting UI,
+session presentation leases, dedicated buffers, and close-on-last-surface
+behavior.  Appkit owns canonical resources, persistent cache policy and
+identity, App/View owner handles, and thin resource-aware wrappers around
+video.el sessions.  Applications provide resource adaptation and host geometry;
+they must pass the active surface or session instead of creating a second
+player for a dedicated-reader transition.
 
 Finite local audio playback uses ~appkit-media-player-start-file~.  One
 ~appkit-media-player-session~ owns its process, progress timer, pause/resume
