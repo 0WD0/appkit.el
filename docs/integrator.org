@@ -228,9 +228,10 @@ starting asynchronous work.
 ** Media
 
 Callers adapt backend objects into canonical resource descriptors and
-explicit preview metadata.  Appkit owns HTTPS-only atomic acquisition,
-byte-level image cache finalization, lifecycle-bound open transfers,
-and protocol-restricted preview and player processes.
+explicit preview metadata.  Appkit owns HTTPS-only atomic acquisition for
+explicit image and file transfers, byte-level image cache finalization,
+lifecycle-bound open transfers and video viewer buffers, and
+protocol-restricted preview and audio-player processes.
 
 A media attachment view is one item's preview, label, description, transfer
 state, and actions.  It is presentation, not the readable or displayable media
@@ -249,6 +250,26 @@ of natural-ratio containment, and add the shared translucent circle-and-triangle
 video marker with ~:play-icon~.  The optional pixel offset moves the SVG
 ~viewBox~ while keeping display width fixed; hot spots are clipped and
 translated into visible coordinates.
+
+Local files and HTTPS video URLs go through
+~appkit-media-play-video-source~.  Remote playback starts immediately through
+~video.el~ and remains range-seekable; it never waits for a full attachment
+download.  GStreamer's sparse progressive buffer belongs to that player
+session.  Under the default ~automatic~ cache policy, Appkit gives video.el an
+atomic destination under ~appkit-media-video-cache-directory~ and retains the
+buffer only when it naturally becomes complete.  Existing complete entries are
+opened locally.  ~:cache-policy 'none~ leaves all buffering session-local.
+
+Clients should provide a stable ~:cache-key~ based on protocol resource
+identity so rotating signed URLs address the same complete cache.  A cache is
+transparent and may remain incomplete; an explicit download is a separate
+user action implemented with ~appkit-media-copy-or-download-resource-async~.
+
+The optional app or view owner owns the Canvas viewer buffer.  Killing the
+viewer retires its owner handle; stopping the owner closes playback and removes
+an incomplete session cache.  ~video.el~ remains authoritative for decoding,
+range requests, buffered intervals, waiting UI, transport, and
+~video-display-buffer-function~.  Clients must not spawn another video player.
 
 Finite local audio playback uses ~appkit-media-player-start-file~.  One
 ~appkit-media-player-session~ owns its process, progress timer, pause/resume
