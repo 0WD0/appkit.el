@@ -733,10 +733,11 @@
       (delete-directory directory t))))
 
 (ert-deftest appkit-media-video-cache-policy-none-streams-without-destination ()
-  (let (opened-source cache-file closed-players)
+  (let (opened-source cache-file session-arguments closed-players)
     (cl-letf (((symbol-function 'video-session-create)
                (lambda (source &rest arguments)
                  (setq opened-source source
+                       session-arguments arguments
                        cache-file (plist-get arguments :cache-file))
                  'session))
               ((symbol-function 'video-session-live-p)
@@ -754,14 +755,21 @@
       (let ((viewer
              (appkit-media-play-video-source
               "https://example.invalid/movie.mp4" "test"
-              :cache-policy 'none)))
+              :cache-policy 'none :live t
+              :request-headers
+              '(("Referer" . "https://example.invalid/")))))
         (unwind-protect
             (progn
               (should (buffer-live-p viewer))
               (should
                (equal opened-source
                       "https://example.invalid/movie.mp4"))
-              (should-not cache-file))
+              (should-not cache-file)
+              (should (eq (plist-get session-arguments :live) t))
+              (should
+               (equal
+                (plist-get session-arguments :request-headers)
+                '(("Referer" . "https://example.invalid/")))))
           (when (buffer-live-p viewer)
             (kill-buffer viewer)))))))
 
@@ -1077,19 +1085,26 @@
     (unwind-protect
         (cl-letf (((symbol-function 'appkit-media-play-video-source)
                    (lambda (source &optional label &rest keys)
-                     (push (list source label (plist-get keys :owner)) calls)
+                     (push (list source label
+                                 (plist-get keys :owner)
+                                 (plist-get keys :live)
+                                 (plist-get keys :request-headers))
+                           calls)
                      :played))
                   ((symbol-function 'appkit-media--play-video-resource)
                    (lambda (resource label &rest keys)
                      (push (list (alist-get 'url resource)
                                  label
-                                 (plist-get keys :owner))
+                                 (plist-get keys :owner)
+                                 (plist-get keys :live)
+                                 (plist-get keys :request-headers))
                            calls)
                      :played)))
           (should
            (eq :played
                (appkit-media-play-video-url
-                "https://example.invalid/url.mp4" "url" :owner app)))
+                "https://example.invalid/url.mp4" "url" :owner app
+                :live t :request-headers '(("Referer" . "url")))))
           (should
            (eq :played
                (appkit-media-open-resource
@@ -1099,7 +1114,8 @@
             (insert "video")
             (appkit-media-add-play-video-properties
              (point-min) (point-max) "https://example.invalid/action.mp4"
-             "action" :owner app)
+             "action" :owner app :live t
+             :request-headers '(("Referer" . "action")))
             (let* ((map (get-text-property (point-min) 'keymap))
                    (command (lookup-key map (kbd "RET"))))
               (should (commandp command))
@@ -1107,9 +1123,11 @@
           (should
            (equal
             (nreverse calls)
-            `(("https://example.invalid/url.mp4" "url" ,app)
-              ("https://example.invalid/resource.mp4" "resource" ,app)
-              ("https://example.invalid/action.mp4" "action" ,app)))))
+            `(("https://example.invalid/url.mp4" "url" ,app t
+               (("Referer" . "url")))
+              ("https://example.invalid/resource.mp4" "resource" ,app nil nil)
+              ("https://example.invalid/action.mp4" "action" ,app t
+               (("Referer" . "action")))))))
       (when (appkit-app-live-p app)
         (appkit-stop-app app)))))
 
