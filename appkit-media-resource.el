@@ -553,14 +553,17 @@ CLIENT-LABEL, OWNER, BUFFER, and DISPLAY-FUNCTION have the same meanings as in
 (cl-defun appkit-media-video-session-create
     (resource &optional client-label
               &key owner cache-key cache-directory cache-update-function
-              (cache-policy appkit-media-video-cache-policy) muted)
+              (cache-policy appkit-media-video-cache-policy) muted live
+              request-headers)
   "Create one Appkit playback session for canonical video RESOURCE.
 
 CLIENT-LABEL identifies errors and messages.  OWNER limits cache callbacks to a
 live Appkit lifecycle.  CACHE-KEY, CACHE-DIRECTORY, CACHE-UPDATE-FUNCTION, and
 CACHE-POLICY have the same meanings as in `appkit-media-play-video-source'.
-MUTED controls the initial player audio state.  The caller must promptly create
-an inline or dedicated surface, or close the returned session."
+MUTED controls the initial player audio state.  LIVE enforces live-stream
+semantics; REQUEST-HEADERS are video transport headers and do not become part
+of RESOURCE identity.  The caller must promptly create an inline or dedicated
+surface, or close the returned session."
   (let* ((label (or client-label "media"))
          (resource (appkit-media-resource-normalize resource))
          (file (alist-get 'file resource))
@@ -605,19 +608,22 @@ an inline or dedicated surface, or close the returned session."
        :resource resource :label label :source source
        :video-session
        (video-session-create
-        source :kind 'video :muted muted :auto-close t
+        source :kind 'video :muted muted :live live :auto-close t
+        :request-headers request-headers
         :cache-file cache-file
         :cache-complete-function cache-complete-function)))))
 
 (cl-defun appkit-media--play-video-resource
     (resource label
               &key owner cache-key cache-directory cache-update-function
-              (cache-policy appkit-media-video-cache-policy))
+              (cache-policy appkit-media-video-cache-policy) live
+              request-headers)
   "Stream canonical video RESOURCE for LABEL in an Appkit-owned session.
 
 OWNER owns the dedicated buffer.  CACHE-KEY and CACHE-DIRECTORY select the
 persistent target, CACHE-UPDATE-FUNCTION receives a completed resource, and
-CACHE-POLICY controls persistent promotion."
+CACHE-POLICY controls persistent promotion.  LIVE and REQUEST-HEADERS configure
+the video transport without changing RESOURCE identity."
   (let (session opened-p)
     (unwind-protect
         (prog1
@@ -628,7 +634,8 @@ CACHE-POLICY controls persistent promotion."
                     :owner owner :cache-key cache-key
                     :cache-directory cache-directory
                     :cache-update-function cache-update-function
-                    :cache-policy cache-policy))
+                    :cache-policy cache-policy :live live
+                    :request-headers request-headers))
              label :owner owner :start t)
           (setq opened-p t))
       (unless opened-p
@@ -637,12 +644,15 @@ CACHE-POLICY controls persistent promotion."
 (cl-defun appkit-media-play-video-source
     (source &optional client-label
             &key owner cache-key cache-directory cache-update-function
-            (cache-policy appkit-media-video-cache-policy))
+            (cache-policy appkit-media-video-cache-policy) live
+            request-headers)
   "Stream local file or HTTPS URL SOURCE through video.el.
 
-Remote playback starts immediately and remains seekable.  Under automatic
-CACHE-POLICY, a complete progressive playback cache is retained under
-CACHE-KEY; `none' leaves buffering session-local.  CACHE-DIRECTORY overrides
+Remote playback starts immediately.  LIVE enforces non-seekable live-stream
+semantics.  REQUEST-HEADERS are applied to the playback transport but excluded
+from canonical resource and cache identity.  Under automatic CACHE-POLICY, a
+complete progressive playback cache is retained under CACHE-KEY; `none' leaves
+buffering session-local.  CACHE-DIRECTORY overrides
 `appkit-media-video-cache-directory'.  CACHE-UPDATE-FUNCTION receives the
 canonical resource after a complete cache is retained.  CLIENT-LABEL names the
 viewer, and OWNER owns its buffer.  Explicit downloads use
@@ -661,23 +671,28 @@ viewer, and OWNER owns its buffer.  Explicit downloads use
      :cache-key cache-key
      :cache-directory cache-directory
      :cache-update-function cache-update-function
-     :cache-policy cache-policy)))
+     :cache-policy cache-policy
+     :live live
+     :request-headers request-headers)))
 
 (cl-defun appkit-media-play-video-url
     (url &optional client-label
          &key owner cache-key cache-directory cache-update-function
-         (cache-policy appkit-media-video-cache-policy))
+         (cache-policy appkit-media-video-cache-policy) live request-headers)
   "Stream video URL for CLIENT-LABEL.
 
-OWNER, CACHE-KEY, CACHE-DIRECTORY, CACHE-UPDATE-FUNCTION, and CACHE-POLICY have
-the same meanings as in `appkit-media-play-video-source'."
+OWNER, CACHE-KEY, CACHE-DIRECTORY, CACHE-UPDATE-FUNCTION, CACHE-POLICY, LIVE,
+and REQUEST-HEADERS have the same meanings as in
+`appkit-media-play-video-source'."
   (appkit-media-play-video-source
    url client-label
    :owner owner
    :cache-key cache-key
    :cache-directory cache-directory
    :cache-update-function cache-update-function
-   :cache-policy cache-policy))
+   :cache-policy cache-policy
+   :live live
+   :request-headers request-headers))
 
 (cl-defun appkit-media-play-video-file
     (path &optional client-label &key owner)
@@ -749,11 +764,11 @@ CACHE-DIRECTORY, CACHE-UPDATE-FUNCTION, and CLIENT-LABEL are forwarded to
 (cl-defun appkit-media-add-play-video-properties
     (start end video-source &optional client-label
            &key owner cache-key cache-directory cache-update-function
-           (cache-policy appkit-media-video-cache-policy))
+           (cache-policy appkit-media-video-cache-policy) live request-headers)
   "Attach a video action between START and END.
 
 VIDEO-SOURCE, CLIENT-LABEL, OWNER, CACHE-KEY, CACHE-DIRECTORY,
-CACHE-UPDATE-FUNCTION, and CACHE-POLICY are forwarded to
+CACHE-UPDATE-FUNCTION, CACHE-POLICY, LIVE, and REQUEST-HEADERS are forwarded to
 `appkit-media-play-video-source'."
   (when (and (appkit-media-url-present-p video-source)
              (< start end))
@@ -766,7 +781,9 @@ CACHE-UPDATE-FUNCTION, and CACHE-POLICY are forwarded to
         :cache-key cache-key
         :cache-directory cache-directory
         :cache-update-function cache-update-function
-        :cache-policy cache-policy))
+        :cache-policy cache-policy
+        :live live
+        :request-headers request-headers))
      (format "Play video: %s" video-source))))
 
 (defun appkit-media--open-cache-file-base (directory key)
