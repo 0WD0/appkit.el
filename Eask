@@ -12,8 +12,11 @@
 (source "gnu")
 (source 'melpa)
 
-(depends-on "emacs" "31.1")
+(depends-on "emacs" "32.0")
 (depends-on "plz" "0.8")
+(depends-on "video" :file
+            (expand-file-name "../video.el"
+                              (file-truename default-directory)))
 
 (development
  (depends-on "evil"))
