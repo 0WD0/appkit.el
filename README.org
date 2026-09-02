@@ -26,8 +26,9 @@ channel, or message models.
 
 * Requirements
 
-- Emacs 27.1+
+- Emacs 32.0+
 - ~plz~ 0.8+
+- ~video.el~ 0.1+ with its native module built
 
 * Depend
 

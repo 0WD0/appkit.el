@@ -7,7 +7,7 @@
 ;; Keywords: lisp, extensions
 ;; URL: https://github.com/emacs-im/appkit.el
 ;; Version: 0.3.0
-;; Package-Requires: ((emacs "31.1") (plz "0.8"))
+;; Package-Requires: ((emacs "32.0") (plz "0.8") (video "0.1.0"))
 
 ;;; Commentary:
 
