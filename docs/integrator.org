@@ -255,8 +255,11 @@ Use ~appkit-media-video-session-create~ when an application may present one
 video in more than one place.  The Appkit wrapper owns the canonical resource,
 stable cache identity, cache policy, and cache-completion update; its embedded
 video.el ~video-session~ owns the single player and presentation leases.
-Sessions are intentionally not globally deduplicated by cache key: separate
-user activations have independent playback state.
+~:request-headers~ configures playback transport without entering canonical
+resource or cache identity.  ~:live t~ forces live, non-seekable behavior when
+protocol discovery is ambiguous.  Sessions are intentionally not globally
+deduplicated by cache key: separate user activations have independent playback
+state.
 
 Create an in-buffer surface with ~appkit-media-video-inline-create~.  Promote
 that exact surface with ~appkit-media-present-video-inline~, or present its
@@ -268,13 +271,13 @@ after its last inline or dedicated lease disappears.  A client's optional
 ~:close-function~ runs exactly once after video.el retires the inline surface.
 
 ~appkit-media-play-video-source~ remains the one-call dedicated-viewer
-convenience API.  Remote playback starts immediately through video.el and
-remains range-seekable; it never waits for a full attachment download.  Under
-the default ~automatic~ cache policy, Appkit gives video.el an atomic
+convenience API.  Remote playback starts immediately through video.el; finite
+media remains range-seekable.  It never waits for a full attachment download.
+Under the default ~automatic~ cache policy, Appkit gives video.el an atomic
 destination under ~appkit-media-video-cache-directory~ and retains the sparse
 progressive buffer only when it naturally becomes complete.  Existing complete
-entries are opened locally.  ~:cache-policy 'none~ leaves all buffering
-session-local.
+entries are opened locally.  Use ~:cache-policy 'none~ for live playback and
+other streams that must leave all buffering session-local.
 
 Clients provide a stable ~:cache-key~ based on protocol resource identity so
 rotating signed URLs address the same complete cache.  A cache is transparent
