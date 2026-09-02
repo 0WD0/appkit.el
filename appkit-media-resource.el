@@ -27,9 +27,7 @@
 (require 'appkit-core)
 (require 'appkit-media-card)
 (require 'appkit-media-image)
-
-(declare-function video-open "video" (source &rest arguments))
-(defvar video-quit-function)
+(require 'video)
 
 (defcustom appkit-media-video-cache-directory
   (locate-user-emacs-file "appkit-video-cache/")
@@ -111,6 +109,26 @@ The function receives one local filename."
   success
   error
   done-p)
+
+(cl-defstruct (appkit-media-video-session
+               (:constructor appkit-media--video-session-create))
+  "Canonical application resource metadata around one video.el session."
+  resource
+  label
+  source
+  video-session)
+
+(cl-defstruct (appkit-media-video-inline
+               (:constructor appkit-media--video-inline-create))
+  "One inline surface borrowing an Appkit video session."
+  session
+  inline)
+
+(defvar-local appkit-media--video-buffer-session nil
+  "Appkit video session borrowed by the current dedicated buffer.")
+
+(defvar-local appkit-media--video-buffer-owner-handle nil
+  "Lifecycle handle owning the current dedicated video buffer.")
 
 (defun appkit-media-transfer-p (object)
   "Return non-nil when OBJECT is an appkit media transfer handle."
@@ -317,83 +335,243 @@ The only valid results are `image', `video', and `file'."
              (file-executable-p program))
         (executable-find program))))
 
-(defun appkit-media--ensure-video-runtime (label)
-  "Load video.el for LABEL or signal a user-facing error."
-  (unless (fboundp 'video-open)
+(defun appkit-media-video-session-live-p (session)
+  "Return non-nil when SESSION owns a live video.el session."
+  (and (appkit-media-video-session-p session)
+       (video-session-live-p
+        (appkit-media-video-session-video-session session))))
+
+(defun appkit-media-video-session-player (session)
+  "Return SESSION's canonical video.el player."
+  (video-session-player
+   (appkit-media-video-session-video-session session)))
+
+(defun appkit-media-video-session-close (session)
+  "Close SESSION through its video.el presentation lifecycle."
+  (when (appkit-media-video-session-p session)
+    (video-session-close
+     (appkit-media-video-session-video-session session)))
+  nil)
+
+(defun appkit-media-video-inline-closed-p (surface)
+  "Return non-nil when Appkit video inline SURFACE is closed."
+  (or (not (appkit-media-video-inline-p surface))
+      (let ((inline (appkit-media-video-inline-inline surface)))
+        (or (not (video-inline-p inline))
+            (video-inline-closed inline)))))
+
+(defun appkit-media--video-inline-finished
+    (surface close-function _inline)
+  "Notify CLOSE-FUNCTION after video.el retires Appkit SURFACE."
+  (when close-function
     (condition-case error-data
-        (require 'video)
+        (funcall close-function surface)
       (error
-       (user-error "%s: video.el is unavailable: %s"
-                   label (error-message-string error-data)))))
-  (unless (fboundp 'video-open)
-    (user-error "%s: video.el does not provide `video-open'" label)))
+       (message "Appkit media inline close callback failed: %s"
+                (error-message-string error-data))))))
+
+(cl-defun appkit-media-video-inline-create
+    (session width height
+             &key poster (fit 'contain) buffer
+             canvas canvas-width canvas-height
+             (destination-x 0) (destination-y 0)
+             visible-function alive-function activate-function close-function)
+  "Create an inline surface borrowing SESSION at WIDTH by HEIGHT.
+
+POSTER, FIT, BUFFER, CANVAS, CANVAS-WIDTH, CANVAS-HEIGHT, DESTINATION-X,
+DESTINATION-Y, VISIBLE-FUNCTION, ALIVE-FUNCTION, and ACTIVATE-FUNCTION carry
+video.el's presentation contracts.  Audio state remains on SESSION's player.
+CLOSE-FUNCTION is called once with the returned surface after it closes."
+  (unless (appkit-media-video-session-live-p session)
+    (error "Cannot create an inline surface for a closed video session"))
+  (when (and close-function (not (functionp close-function)))
+    (error "Appkit inline video close function is not callable"))
+  (let* ((surface (appkit-media--video-inline-create :session session))
+         (video-session
+          (appkit-media-video-session-video-session session)))
+    (condition-case error-data
+        (let ((inline
+               (video-session-inline-create
+                video-session width height
+                :poster poster :fit fit :buffer buffer
+                :canvas canvas :canvas-width canvas-width
+                :canvas-height canvas-height
+                :destination-x destination-x :destination-y destination-y
+                :visible-function visible-function
+                :alive-function alive-function
+                :activate-function activate-function
+                :close-function
+                (lambda (inline)
+                  (appkit-media--video-inline-finished
+                   surface close-function inline)))))
+          (setf (appkit-media-video-inline-inline surface) inline)
+          surface)
+      ((error quit)
+       (when (zerop (video-session-presentation-count video-session))
+         (video-session-close video-session))
+       (signal (car error-data) (cdr error-data))))))
+
+(defun appkit-media-video-inline-play (surface)
+  "Start or resume Appkit video inline SURFACE."
+  (when (appkit-media-video-inline-closed-p surface)
+    (error "Appkit inline video surface is closed"))
+  (video-inline-play (appkit-media-video-inline-inline surface))
+  surface)
+
+(defun appkit-media-video-inline-toggle (surface)
+  "Toggle playback for Appkit video inline SURFACE."
+  (when (appkit-media-video-inline-closed-p surface)
+    (error "Appkit inline video surface is closed"))
+  (video-inline-toggle-occurrence (appkit-media-video-inline-inline surface))
+  surface)
+
+(defun appkit-media-video-inline-muted-p (surface)
+  "Return Appkit video inline SURFACE's canonical mute state."
+  (when (appkit-media-video-inline-closed-p surface)
+    (error "Appkit inline video surface is closed"))
+  (video-inline-muted-p (appkit-media-video-inline-inline surface)))
+
+(defun appkit-media-video-inline-toggle-muted (surface)
+  "Toggle Appkit video inline SURFACE's canonical mute state."
+  (when (appkit-media-video-inline-closed-p surface)
+    (error "Appkit inline video surface is closed"))
+  (video-inline-toggle-muted (appkit-media-video-inline-inline surface))
+  surface)
+
+(defun appkit-media-video-inline-set-muted (surface muted)
+  "Set Appkit video inline SURFACE audio MUTED state."
+  (when (appkit-media-video-inline-closed-p surface)
+    (error "Appkit inline video surface is closed"))
+  (video-inline-set-muted (appkit-media-video-inline-inline surface) muted)
+  surface)
+
+(defun appkit-media-video-inline-bind-controls (surface map)
+  "Bind Appkit video inline SURFACE transport controls into MAP."
+  (when (appkit-media-video-inline-closed-p surface)
+    (error "Appkit inline video surface is closed"))
+  (video-inline-bind-controls (appkit-media-video-inline-inline surface) map)
+  surface)
+
+(defun appkit-media-video-inline-close (surface)
+  "Close Appkit video inline SURFACE."
+  (when (and (appkit-media-video-inline-p surface)
+             (not (appkit-media-video-inline-closed-p surface)))
+    (video-inline-close (appkit-media-video-inline-inline surface)))
+  nil)
 
 (defun appkit-media--kill-video-buffer (buffer)
   "Kill video viewer BUFFER when it is still live."
   (when (buffer-live-p buffer)
     (kill-buffer buffer)))
 
-(cl-defun appkit-media--open-video-buffer
-    (source label owner &key cache-file cache-complete-function)
-  "Open video SOURCE for LABEL and bind its buffer to OWNER.
+(defun appkit-media--release-video-buffer-session ()
+  "Release Appkit owner metadata for the current video.el presentation."
+  (when-let* ((handle appkit-media--video-buffer-owner-handle))
+    (setq appkit-media--video-buffer-owner-handle nil)
+    (when (appkit-handle-alive-p handle)
+      (appkit-retire-handle handle)))
+  (setq appkit-media--video-buffer-session nil))
 
-CACHE-FILE and CACHE-COMPLETE-FUNCTION are passed to video.el for optional
-promotion of a complete progressive playback cache."
-  (let ((buffer (generate-new-buffer (format "*%s Video*" label)))
-        handle
-        opened-p)
+(cl-defun appkit-media-present-video-session
+    (session &optional client-label
+             &key owner buffer start display-function)
+  "Present SESSION in a dedicated video buffer without replacing its player.
+
+CLIENT-LABEL names a generated BUFFER.  OWNER owns that buffer when non-nil.
+START explicitly requests playback; nil preserves the shared player's exact
+state.  DISPLAY-FUNCTION is forwarded to video.el."
+  (let* ((label (or client-label
+                    (appkit-media-video-session-label session)
+                    "media"))
+         (buffer (or (and (buffer-live-p buffer) buffer)
+                     (generate-new-buffer (format "*%s Video*" label))))
+         handle
+         opened-p)
+    (unless (appkit-media--owner-live-p owner)
+      (user-error "%s: media owner is no longer live" label))
+    (unless (appkit-media-video-session-live-p session)
+      (error "%s: video session is closed" label))
     (unwind-protect
         (progn
-          (when owner
+          (with-current-buffer buffer
+            (if (eq appkit-media--video-buffer-session session)
+                (setq handle appkit-media--video-buffer-owner-handle)
+              (appkit-media--release-video-buffer-session)))
+          (when (and owner (not handle))
             (setq handle
                   (appkit-register-handle
                    owner 'buffer buffer #'appkit-media--kill-video-buffer)))
           (let ((opened
-                 (video-open
-                  source :kind 'video :buffer buffer
-                  :cache-file cache-file
-                  :cache-complete-function cache-complete-function)))
-            (unless (and (eq opened buffer) (buffer-live-p buffer))
+                 (video-session-present
+                  (appkit-media-video-session-video-session session)
+                  :buffer buffer :display-function display-function)))
+            (unless (and (eq opened buffer)
+                         (buffer-live-p buffer)
+                         (appkit-media--owner-live-p owner))
               (error "%s: video.el did not return its live viewer buffer"
                      label)))
           (with-current-buffer buffer
-            (setq-local video-quit-function #'kill-current-buffer)
-            (when handle
-              (add-hook
-               'kill-buffer-hook
-               (lambda ()
-                 (when (appkit-handle-alive-p handle)
-                   (appkit-retire-handle handle)))
-               nil t)))
+            (setq-local video-quit-function #'kill-current-buffer
+                        appkit-media--video-buffer-session session
+                        appkit-media--video-buffer-owner-handle handle)
+            (add-hook 'kill-buffer-hook
+                      #'appkit-media--release-video-buffer-session nil t)
+            (add-hook 'change-major-mode-hook
+                      #'appkit-media--release-video-buffer-session nil t))
+          (when start
+            (video-player-play
+             (appkit-media-video-session-player session)))
           (setq opened-p t)
           (message
            "%s: %s video in Emacs"
            label
-           (if (appkit-media-file-present-p source)
+           (if (appkit-media-file-present-p
+                (appkit-media-video-session-source session))
                "playing local"
              "streaming"))
           buffer)
       (unless opened-p
-        (appkit-media--kill-video-buffer buffer)
+        (when (buffer-live-p buffer)
+          (kill-buffer buffer))
         (when (and handle (appkit-handle-alive-p handle))
           (appkit-retire-handle handle))))))
 
-(cl-defun appkit-media--play-video-resource
-    (resource label
-              &key owner cache-key cache-directory cache-update-function
-              (cache-policy appkit-media-video-cache-policy))
-  "Stream and optionally cache canonical video RESOURCE for LABEL.
+(cl-defun appkit-media-present-video-inline
+    (surface &optional client-label
+             &key owner buffer display-function)
+  "Present inline SURFACE in a dedicated buffer without changing playback.
 
-OWNER owns the viewer buffer.  CACHE-POLICY is `automatic' or `none'.
-Automatic caching uses CACHE-KEY and CACHE-DIRECTORY, then notifies
-CACHE-UPDATE-FUNCTION only if the sparse playback cache becomes complete."
-  (unless (appkit-media--owner-live-p owner)
-    (user-error "%s: media owner is no longer live" label))
-  (unless (memq cache-policy '(automatic none))
-    (user-error "%s: invalid video cache policy: %S" label cache-policy))
-  (appkit-media--ensure-video-runtime label)
-  (let ((file (alist-get 'file resource))
-        (url (alist-get 'url resource)))
+CLIENT-LABEL, OWNER, BUFFER, and DISPLAY-FUNCTION have the same meanings as in
+`appkit-media-present-video-session'."
+  (when (appkit-media-video-inline-closed-p surface)
+    (error "Cannot present a closed Appkit inline video surface"))
+  (appkit-media-present-video-session
+   (appkit-media-video-inline-session surface) client-label
+   :owner owner :buffer buffer :start nil
+   :display-function display-function))
+
+(cl-defun appkit-media-video-session-create
+    (resource &optional client-label
+              &key owner cache-key cache-directory cache-update-function
+              (cache-policy appkit-media-video-cache-policy) muted)
+  "Create one Appkit playback session for canonical video RESOURCE.
+
+CLIENT-LABEL identifies errors and messages.  OWNER limits cache callbacks to a
+live Appkit lifecycle.  CACHE-KEY, CACHE-DIRECTORY, CACHE-UPDATE-FUNCTION, and
+CACHE-POLICY have the same meanings as in `appkit-media-play-video-source'.
+MUTED controls the initial player audio state.  The caller must promptly create
+an inline or dedicated surface, or close the returned session."
+  (let* ((label (or client-label "media"))
+         (resource (appkit-media-resource-normalize resource))
+         (file (alist-get 'file resource))
+         (url (alist-get 'url resource))
+         source
+         cache-file
+         cache-complete-function)
+    (unless (appkit-media--owner-live-p owner)
+      (user-error "%s: media owner is no longer live" label))
+    (unless (memq cache-policy '(automatic none))
+      (user-error "%s: invalid video cache policy: %S" label cache-policy))
     (cl-labels
         ((remember-cache
           (_player local-file)
@@ -404,26 +582,57 @@ CACHE-UPDATE-FUNCTION only if the sparse playback cache becomes complete."
             (message "%s: retained complete video playback cache" label))))
       (cond
        ((appkit-media-file-present-p file)
-        (appkit-media--open-video-buffer file label owner))
-       ((appkit-media-url-present-p url)
+        (setq source file))
+       ((appkit-media--https-url-p url)
         (if (eq cache-policy 'none)
-            (appkit-media--open-video-buffer url label owner)
-          (let ((target
-                 (appkit-media--video-cache-target
-                  (or cache-key (format "video-url:%s" url))
-                  (or cache-directory
-                      appkit-media-video-cache-directory))))
-            (if (appkit-media-file-present-p target)
-                (progn
-                  (remember-cache nil target)
-                  (appkit-media--open-video-buffer target label owner))
-              (appkit-media--open-video-buffer
-               url label owner
-               :cache-file target
-               :cache-complete-function #'remember-cache)))))
+            (setq source url)
+          (setq cache-file
+                (appkit-media--video-cache-target
+                 (or cache-key (format "video-url:%s" url))
+                 (or cache-directory
+                     appkit-media-video-cache-directory)))
+          (if (appkit-media-file-present-p cache-file)
+              (progn
+                (remember-cache nil cache-file)
+                (setq source cache-file
+                      cache-file nil))
+            (setq source url
+                  cache-complete-function #'remember-cache))))
        (t
-        (user-error "%s: video resource has neither local file nor URL"
-                    label))))))
+        (user-error "%s: video resource has neither local file nor HTTPS URL"
+                    label)))
+      (appkit-media--video-session-create
+       :resource resource :label label :source source
+       :video-session
+       (video-session-create
+        source :kind 'video :muted muted :auto-close t
+        :cache-file cache-file
+        :cache-complete-function cache-complete-function)))))
+
+(cl-defun appkit-media--play-video-resource
+    (resource label
+              &key owner cache-key cache-directory cache-update-function
+              (cache-policy appkit-media-video-cache-policy))
+  "Stream canonical video RESOURCE for LABEL in an Appkit-owned session.
+
+OWNER owns the dedicated buffer.  CACHE-KEY and CACHE-DIRECTORY select the
+persistent target, CACHE-UPDATE-FUNCTION receives a completed resource, and
+CACHE-POLICY controls persistent promotion."
+  (let (session opened-p)
+    (unwind-protect
+        (prog1
+            (appkit-media-present-video-session
+             (setq session
+                   (appkit-media-video-session-create
+                    resource label
+                    :owner owner :cache-key cache-key
+                    :cache-directory cache-directory
+                    :cache-update-function cache-update-function
+                    :cache-policy cache-policy))
+             label :owner owner :start t)
+          (setq opened-p t))
+      (unless opened-p
+        (appkit-media-video-session-close session)))))
 
 (cl-defun appkit-media-play-video-source
     (source &optional client-label

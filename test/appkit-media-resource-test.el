@@ -659,15 +659,28 @@
         opened-sources
         cache-files
         cache-callbacks
+        closed-players
         updated)
     (unwind-protect
-        (cl-letf (((symbol-function 'video-open)
+        (cl-letf (((symbol-function 'video-session-create)
                    (lambda (source &rest arguments)
+                     (push source opened-sources)
+                     (push (plist-get arguments :cache-file) cache-files)
+                     (push (plist-get arguments :cache-complete-function)
+                           cache-callbacks)
+                     (list 'session source)))
+                  ((symbol-function 'video-session-live-p)
+                   (lambda (session)
+                     (and session (not (memq session closed-players)))))
+                  ((symbol-function 'video-session-close)
+                   (lambda (session)
+                     (push session closed-players)))
+                  ((symbol-function 'appkit-media-video-session-player)
+                   (lambda (_session) 'player))
+                  ((symbol-function 'video-player-play) #'ignore)
+                  ((symbol-function 'video-session-present)
+                   (lambda (_session &rest arguments)
                      (let ((viewer (plist-get arguments :buffer)))
-                       (push source opened-sources)
-                       (push (plist-get arguments :cache-file) cache-files)
-                       (push (plist-get arguments :cache-complete-function)
-                             cache-callbacks)
                        (push viewer viewers)
                        viewer)))
                   ((symbol-function
@@ -712,18 +725,31 @@
               (should (buffer-live-p viewer)))
             (should (equal (car opened-sources) target))
             (should-not (car cache-files))
-            (should-not (car cache-callbacks))))
+            (should-not (car cache-callbacks))
+            (kill-buffer (car viewers))))
       (dolist (viewer viewers)
         (when (buffer-live-p viewer)
           (kill-buffer viewer)))
       (delete-directory directory t))))
 
 (ert-deftest appkit-media-video-cache-policy-none-streams-without-destination ()
-  (let (opened-source cache-file)
-    (cl-letf (((symbol-function 'video-open)
+  (let (opened-source cache-file closed-players)
+    (cl-letf (((symbol-function 'video-session-create)
                (lambda (source &rest arguments)
                  (setq opened-source source
                        cache-file (plist-get arguments :cache-file))
+                 'session))
+              ((symbol-function 'video-session-live-p)
+               (lambda (session)
+                 (and session (not (memq session closed-players)))))
+              ((symbol-function 'video-session-close)
+               (lambda (session)
+                 (push session closed-players)))
+              ((symbol-function 'appkit-media-video-session-player)
+               (lambda (_session) 'player))
+              ((symbol-function 'video-player-play) #'ignore)
+              ((symbol-function 'video-session-present)
+               (lambda (_session &rest arguments)
                  (plist-get arguments :buffer))))
       (let ((viewer
              (appkit-media-play-video-source
@@ -739,14 +765,111 @@
           (when (buffer-live-p viewer)
             (kill-buffer viewer)))))))
 
+(ert-deftest appkit-media-inline-and-dedicated-surfaces-share-one-player ()
+  (let ((player (list :position 23.5 :desired-state 'playing))
+        (create-count 0)
+        inline-player
+        presented-player
+        viewer
+        closed
+        callback-surface
+        (callback-count 0))
+    (cl-letf (((symbol-function 'video-session-create)
+               (lambda (&rest _)
+                 (cl-incf create-count)
+                 'video-session))
+              ((symbol-function 'video-session-live-p)
+               (lambda (candidate)
+                 (and (eq candidate 'video-session) (not closed))))
+              ((symbol-function 'video-session-close)
+               (lambda (candidate)
+                 (should (eq candidate 'video-session))
+                 (setq closed t)))
+              ((symbol-function 'video-session-player)
+               (lambda (candidate)
+                 (should (eq candidate 'video-session))
+                 player))
+              ((symbol-function 'video-player-play) #'ignore)
+              ((symbol-function 'video-session-inline-create)
+               (lambda (candidate _width _height &rest arguments)
+                 (should (eq candidate 'video-session))
+                 (setq inline-player player)
+                 (list :closed nil
+                       :close-function
+                       (plist-get arguments :close-function))))
+              ((symbol-function 'video-inline-p) #'listp)
+              ((symbol-function 'video-inline-closed)
+               (lambda (inline) (plist-get inline :closed)))
+              ((symbol-function 'appkit-media-video-inline-closed-p)
+               (lambda (surface)
+                 (plist-get
+                  (appkit-media-video-inline-inline surface) :closed)))
+              ((symbol-function 'video-inline-close)
+               (lambda (inline)
+                 (unless (plist-get inline :closed)
+                   (setf (plist-get inline :closed) t)
+                   (funcall (plist-get inline :close-function) inline))))
+              ((symbol-function 'video-session-present)
+               (lambda (candidate &rest arguments)
+                 (should (eq candidate 'video-session))
+                 (setq presented-player player
+                       viewer (plist-get arguments :buffer))
+                 (with-current-buffer viewer
+                   (add-hook
+                    'kill-buffer-hook
+                    (lambda () (video-session-close candidate)) nil t))
+                 viewer)))
+      (let* ((session
+              (appkit-media-video-session-create
+               '((url . "https://example.invalid/shared.mp4"))
+               "test" :cache-policy 'none))
+             (surface
+              (appkit-media-video-inline-create
+               session 320 180
+               :close-function
+               (lambda (closed-surface)
+                 (setq callback-surface closed-surface)
+                 (cl-incf callback-count)))))
+        (setq viewer
+              (appkit-media-present-video-session
+               session "test" :start nil))
+        (should (= create-count 1))
+        (should (eq inline-player player))
+        (should (eq presented-player player))
+        (should (= (plist-get presented-player :position) 23.5))
+        (appkit-media-video-inline-close surface)
+        (should (eq callback-surface surface))
+        (should (= callback-count 1))
+        (appkit-media-video-inline-close surface)
+        (should (= callback-count 1))
+        (should-not closed)
+        (kill-buffer viewer)
+        (should closed)
+        (should-not (appkit-media-video-session-live-p session))))))
+
 (ert-deftest appkit-media-owned-video-buffer-stops-with-app ()
   (let ((app (appkit-start-app 'appkit-media-test :id 'owned
                                :shutdown #'ignore))
-        viewer)
+        viewer
+        closed)
     (unwind-protect
-        (cl-letf (((symbol-function 'video-open)
-                   (lambda (_source &rest arguments)
-                     (setq viewer (plist-get arguments :buffer)))))
+        (cl-letf (((symbol-function 'video-session-create)
+                   (lambda (&rest _) 'session))
+                  ((symbol-function 'video-session-live-p)
+                   (lambda (session) (and session (not closed))))
+                  ((symbol-function 'video-session-close)
+                   (lambda (_session) (setq closed t)))
+                  ((symbol-function 'appkit-media-video-session-player)
+                   (lambda (_session) 'player))
+                  ((symbol-function 'video-player-play) #'ignore)
+                  ((symbol-function 'video-session-present)
+                   (lambda (session &rest arguments)
+                     (setq viewer (plist-get arguments :buffer))
+                     (with-current-buffer viewer
+                       (add-hook
+                        'kill-buffer-hook
+                        (lambda () (video-session-close session)) nil t))
+                     viewer)))
           (let ((result
                  (appkit-media-play-video-source
                   "https://example.invalid/owned.mp4" "test" :owner app)))
@@ -755,6 +878,7 @@
           (should (= 1 (length (appkit-app-handles app))))
           (appkit-stop-app app)
           (should-not (buffer-live-p viewer))
+          (should closed)
           (should-not (appkit-app-handles app)))
       (when (appkit-app-live-p app)
         (appkit-stop-app app))
@@ -766,16 +890,31 @@
                                :shutdown #'ignore))
         (buffer (generate-new-buffer " *appkit-media-view-owner*"))
         viewer
-        view)
+        view
+        closed)
     (unwind-protect
         (progn
           (with-current-buffer buffer
             (setq view
                   (appkit-attach-view
                    :app app :id 'video :mode major-mode)))
-          (cl-letf (((symbol-function 'video-open)
-                     (lambda (_source &rest arguments)
-                       (setq viewer (plist-get arguments :buffer)))))
+          (cl-letf (((symbol-function 'video-session-create)
+                     (lambda (&rest _) 'session))
+                    ((symbol-function 'video-session-live-p)
+                     (lambda (session) (and session (not closed))))
+                    ((symbol-function 'video-session-close)
+                     (lambda (_session) (setq closed t)))
+                    ((symbol-function 'appkit-media-video-session-player)
+                     (lambda (_session) 'player))
+                    ((symbol-function 'video-player-play) #'ignore)
+                    ((symbol-function 'video-session-present)
+                     (lambda (session &rest arguments)
+                       (setq viewer (plist-get arguments :buffer))
+                       (with-current-buffer viewer
+                         (add-hook
+                          'kill-buffer-hook
+                          (lambda () (video-session-close session)) nil t))
+                       viewer)))
             (let ((result
                    (appkit-media-play-video-source
                     "https://example.invalid/view.mp4" "test" :owner view)))
@@ -783,6 +922,7 @@
             (should (= 1 (length (appkit-view-handles view))))
             (appkit-kill-view view)
             (should-not (buffer-live-p viewer))
+            (should closed)
             (should-not (appkit-view-handles view))
             (should-not (appkit-view-live-p view))))
       (when (appkit-app-live-p app)
@@ -794,17 +934,33 @@
 (ert-deftest appkit-media-video-buffer-kill-retires-owner ()
   (let ((app (appkit-start-app 'appkit-media-test :id 'buffer-kill
                                :shutdown #'ignore))
-        viewer)
+        viewer
+        closed)
     (unwind-protect
-        (cl-letf (((symbol-function 'video-open)
-                   (lambda (_source &rest arguments)
-                     (setq viewer (plist-get arguments :buffer)))))
+        (cl-letf (((symbol-function 'video-session-create)
+                   (lambda (&rest _) 'session))
+                  ((symbol-function 'video-session-live-p)
+                   (lambda (session) (and session (not closed))))
+                  ((symbol-function 'video-session-close)
+                   (lambda (_session) (setq closed t)))
+                  ((symbol-function 'appkit-media-video-session-player)
+                   (lambda (_session) 'player))
+                  ((symbol-function 'video-player-play) #'ignore)
+                  ((symbol-function 'video-session-present)
+                   (lambda (session &rest arguments)
+                     (setq viewer (plist-get arguments :buffer))
+                     (with-current-buffer viewer
+                       (add-hook
+                        'kill-buffer-hook
+                        (lambda () (video-session-close session)) nil t))
+                     viewer)))
           (appkit-media-play-video-source
            "https://example.invalid/kill.mp4" "test" :owner app)
           (should (= 1 (length (appkit-app-handles app))))
           (with-current-buffer viewer
             (funcall video-quit-function))
           (should-not (buffer-live-p viewer))
+          (should closed)
           (should-not (appkit-app-handles app))
           (should (appkit-app-live-p app)))
       (when (appkit-app-live-p app)
@@ -815,10 +971,20 @@
 (ert-deftest appkit-media-video-constructor-error-retires-owner ()
   (let ((app (appkit-start-app 'appkit-media-test :id 'constructor-error
                                :shutdown #'ignore))
-        viewer)
+        viewer
+        closed)
     (unwind-protect
-        (cl-letf (((symbol-function 'video-open)
-                   (lambda (_source &rest arguments)
+        (cl-letf (((symbol-function 'video-session-create)
+                   (lambda (&rest _) 'session))
+                  ((symbol-function 'video-session-live-p)
+                   (lambda (session) (and session (not closed))))
+                  ((symbol-function 'video-session-close)
+                   (lambda (_session) (setq closed t)))
+                  ((symbol-function 'appkit-media-video-session-player)
+                   (lambda (_session) 'player))
+                  ((symbol-function 'video-player-play) #'ignore)
+                  ((symbol-function 'video-session-present)
+                   (lambda (_session &rest arguments)
                      (setq viewer (plist-get arguments :buffer))
                      (error "video constructor failed"))))
           (let ((condition
@@ -828,6 +994,7 @@
             (should
              (equal (error-message-string condition)
                     "video constructor failed")))
+          (should closed)
           (should-not (buffer-live-p viewer))
           (should-not (appkit-app-handles app)))
       (when (appkit-app-live-p app)
@@ -836,10 +1003,20 @@
 (ert-deftest appkit-media-video-constructor-throw-retires-owner ()
   (let ((app (appkit-start-app 'appkit-media-test :id 'constructor-throw
                                :shutdown #'ignore))
-        viewer)
+        viewer
+        closed)
     (unwind-protect
-        (cl-letf (((symbol-function 'video-open)
-                   (lambda (_source &rest arguments)
+        (cl-letf (((symbol-function 'video-session-create)
+                   (lambda (&rest _) 'session))
+                  ((symbol-function 'video-session-live-p)
+                   (lambda (session) (and session (not closed))))
+                  ((symbol-function 'video-session-close)
+                   (lambda (_session) (setq closed t)))
+                  ((symbol-function 'appkit-media-video-session-player)
+                   (lambda (_session) 'player))
+                  ((symbol-function 'video-player-play) #'ignore)
+                  ((symbol-function 'video-session-present)
+                   (lambda (_session &rest arguments)
                      (setq viewer (plist-get arguments :buffer))
                      (throw 'appkit-media-constructor-exit :escaped))))
           (should
@@ -848,6 +1025,7 @@
                  (appkit-media-play-video-source
                   "https://example.invalid/throw.mp4" "test" :owner app)
                  :returned)))
+          (should closed)
           (should-not (buffer-live-p viewer))
           (should-not (appkit-app-handles app)))
       (when (appkit-app-live-p app)
@@ -856,15 +1034,26 @@
 (ert-deftest appkit-media-video-stop-during-open-kills-viewer ()
   (let ((app (appkit-start-app 'appkit-media-test :id 'reentrant
                                :shutdown #'ignore))
-        viewer)
-    (cl-letf (((symbol-function 'video-open)
-               (lambda (_source &rest arguments)
+        viewer
+        closed)
+    (cl-letf (((symbol-function 'video-session-create)
+               (lambda (&rest _) 'session))
+              ((symbol-function 'video-session-live-p)
+               (lambda (session) (and session (not closed))))
+              ((symbol-function 'video-session-close)
+               (lambda (_session) (setq closed t)))
+              ((symbol-function 'appkit-media-video-session-player)
+               (lambda (_session) 'player))
+              ((symbol-function 'video-player-play) #'ignore)
+              ((symbol-function 'video-session-present)
+               (lambda (_session &rest arguments)
                  (setq viewer (plist-get arguments :buffer))
                  (appkit-stop-app app)
                  viewer)))
       (should-error
        (appkit-media-play-video-source
         "https://example.invalid/late.mp4" "test" :owner app))
+      (should closed)
       (should-not (buffer-live-p viewer))
       (should-not (appkit-app-handles app)))))
 
@@ -873,7 +1062,7 @@
                                :shutdown #'ignore))
         opened)
     (appkit-stop-app app)
-    (cl-letf (((symbol-function 'video-open)
+    (cl-letf (((symbol-function 'video-session-create)
                (lambda (&rest _)
                  (setq opened t))))
       (should-error
@@ -924,14 +1113,7 @@
       (when (appkit-app-live-p app)
         (appkit-stop-app app)))))
 
-(ert-deftest appkit-media-video-errors-are-explicit ()
-  (cl-letf (((symbol-function 'appkit-media--ensure-video-runtime)
-             (lambda (label)
-               (user-error "%s: video.el is unavailable" label))))
-    (should-error
-     (appkit-media-play-video-source
-      "https://example.invalid/movie.mp4" "qq")
-     :type 'user-error))
+(ert-deftest appkit-media-video-rejects-invalid-sources ()
   (should-error
    (appkit-media-play-video-source nil "client")
    :type 'user-error)
