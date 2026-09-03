@@ -559,8 +559,9 @@ unique presentation name whether that foreign view is live or detached."
   "Attach a new appkit view for APP and ID to the current buffer.
 
 STATE is application-owned view state.  MODE records the view's major mode.
-SYNC-FUNCTION synchronizes invalidations for PARTS.  POSITION-POLICY controls
-  how render updates preserve the current position."
+SYNC-FUNCTION accepts (VIEW INVALIDATIONS EVENTS) and synchronizes PARTS.
+Appkit acknowledges the supplied event snapshot only after it returns normally.
+POSITION-POLICY controls how render updates preserve the current position."
   (unless (appkit-app-live-p app)
     (error "Cannot attach a view to a dead appkit app"))
   (appkit--assert-current-buffer-owns-fingerprint app id)
