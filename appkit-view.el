@@ -603,7 +603,6 @@ context delimiters, defaulting to two columns."
           :preview-width preview-width
           :separator-width (if (> preview-width 0) 1 0))))
 
-
 (cl-defun appkit-view-insert-one-line-row
     (row &key indent width icon-slot-width context-width-spec time-slot-width)
   "Insert ROW using one-line activity-style layout.
@@ -732,9 +731,9 @@ its width is reserved before the context is elided."
        (point)
        (append (or (appkit-view-one-line-row-line-properties row) '())
                (when-let* ((help-echo (appkit-view-one-line-row-help-echo row)))
-		 (list 'help-echo help-echo))
+                 (list 'help-echo help-echo))
                (when-let* ((mouse-face (appkit-view-one-line-row-mouse-face row)))
-		 (list 'mouse-face mouse-face)))))))
+                 (list 'mouse-face mouse-face)))))))
 
 (provide 'appkit-view)
 
