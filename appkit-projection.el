@@ -95,13 +95,10 @@ every existing row.  `all' is never returned as a changed dependency."
                               (copy-sequence existing-keys))))))
          (reconcile-p
           (or reconcile
-              (appkit-invalidations-structure-p invalidations)
-              entries
-              resources
-              geometry-p
               forced
-              (cl-some (lambda (part) (memq part parts))
-                       reconcile-parts))))
+              changed-dependencies
+              (appkit-invalidations-affect-p
+               invalidations reconcile-parts))))
     (appkit-projection-diff--create
      :reconcile-p (and reconcile-p t)
      :force-keys forced
