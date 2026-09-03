@@ -5,6 +5,27 @@
 (require 'appkit-invalidation)
 (require 'appkit-test-helper)
 
+
+(ert-deftest appkit-invalidations-affect-content-without-position-promotion ()
+  (cl-labels
+      ((affected-p
+         (&key structure parts entries resources position domains)
+         (let ((invalidations (appkit-invalidations-create)))
+           (setf (appkit-invalidations-structure-p invalidations) structure
+                 (appkit-invalidations-parts invalidations) parts
+                 (appkit-invalidations-entry-keys invalidations) entries
+                 (appkit-invalidations-resource-keys invalidations) resources
+                 (appkit-invalidations-position-p invalidations) position)
+           (appkit-invalidations-affect-p invalidations domains))))
+    (should-not (affected-p :parts '(frame) :domains '(profile)))
+    (should-not (affected-p :parts '(header) :domains '(profile)))
+    (should-not (affected-p :position t :domains '(profile)))
+    (should (affected-p :parts '(profile) :domains '(profile)))
+    (should (affected-p :structure t :domains '(profile)))
+    (should (affected-p :entries '(row) :domains '(profile)))
+    (should (affected-p :resources '((avatar "u")) :domains '(profile)))
+    (should (affected-p :parts '(geometry) :domains '(profile)))))
+
 (ert-deftest appkit-invalidations-coalesce-before-sync ()
   (appkit-test-with-view
     (let* ((view (appkit-current-view))
