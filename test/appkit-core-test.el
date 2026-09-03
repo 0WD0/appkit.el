@@ -717,6 +717,50 @@
       (when (buffer-live-p buffer)
         (kill-buffer buffer)))))
 
+(ert-deftest appkit-view-operation-owns-transport-handles-as-children ()
+  (appkit-test-with-view
+    (let* ((view (appkit-current-view))
+           (operation (appkit-view-operation-begin view 'page))
+           cancelled
+           (transport
+            (appkit-register-handle
+             operation 'test 'transport
+             (lambda (object) (setq cancelled object)))))
+      (should (appkit-owner-live-p operation))
+      (should (memq transport (appkit-view-operation-handles operation)))
+      (should-not (memq transport (appkit-view-handles view)))
+      (appkit-view-operation-cancel view 'page)
+      (should (eq cancelled 'transport))
+      (should-not (appkit-owner-live-p operation))
+      (should-not (appkit-view-operation-handles operation)))))
+
+(ert-deftest appkit-view-operation-fences-and-cancels-replaced-view-state ()
+  (appkit-test-with-view
+    (let* ((view (appkit-current-view))
+           (state (appkit-view-state view))
+           (replacement (list :replacement t))
+           (operation (appkit-view-operation-begin view 'page))
+           cancelled)
+      (appkit-register-handle
+       operation 'test 'transport
+       (lambda (object) (setq cancelled object)))
+      (setf (appkit-view-state view) replacement)
+      (should-not (appkit-view-operation-current-p operation))
+      (should-not (appkit-view-operation-finish operation))
+      (setf (appkit-view-state view) state)
+      (should
+       (eq view
+           (appkit-open-view
+            :app (appkit-view-app view)
+            :id (appkit-view-id view)
+            :mode (appkit-view-mode view)
+            :buffer-name (buffer-name (appkit-view-buffer view))
+            :state replacement
+            :sync-function #'ignore
+            :parts nil)))
+      (should (eq (appkit-view-state view) replacement))
+      (should (eq cancelled 'transport)))))
+
 (provide 'appkit-core-test)
 
 ;;; appkit-core-test.el ends here
