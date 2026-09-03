@@ -147,8 +147,11 @@
        :position 'first)
       (should (eq 'a (get-text-property (point) 'test-projection-key)))
       (should (string-prefix-p "Ready\n" (buffer-string)))
-      (appkit-projection-sync
-       view nil :header "Settled\n" :reconcile-p nil)
+      (let ((invalidations (appkit-invalidations-create)))
+        (setf (appkit-invalidations-parts invalidations) '(frame))
+        (appkit-projection-sync-diff
+         view nil (appkit-projection-diff-derive invalidations)
+         :header "Settled\n"))
       (should (= 1 (gethash 'a prints)))
       (should (equal '(a) (appkit-projection-keys view)))
       (should (string-prefix-p "Settled\n" (buffer-string))))))
