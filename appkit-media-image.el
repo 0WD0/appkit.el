@@ -794,7 +794,7 @@ the image's protocol alt text.  HELP-ECHO describes ACTION."
 (defun appkit-media--char-pixel-width ()
   "Return one default-face column width for the current render target."
   (save-excursion
-    (let ((window (appkit-media--render-window)))
+    (let ((window (appkit-view-display-window)))
       (max 1
            (or (and window
                     (ignore-errors (window-font-width window 'default)))
@@ -806,11 +806,6 @@ the image's protocol alt text.  HELP-ECHO describes ACTION."
                (frame-char-width)
                1)))))
 
-(defun appkit-media--render-window ()
-  "Return the canonical live window displaying the current buffer."
-  (appkit-view-display-window (current-buffer)))
-
-
 (defun appkit-media--char-pixel-height ()
   "Return the default character height for the current buffer in pixels.
 
@@ -819,7 +814,7 @@ does not use `line-pixel-height': asynchronous rendering can run while the
 selected window displays an unrelated full-size image, making that function
 return the source image height instead of a character height."
   (save-excursion
-    (let ((window (appkit-media--render-window)))
+    (let ((window (appkit-view-display-window)))
       (max 1
            (or (and window
                     (ignore-errors
@@ -830,7 +825,7 @@ return the source image height instead of a character height."
 
 (defun appkit-media--base-char-pixel-height ()
   "Return unscaled default-face height for the current render target."
-  (let ((window (appkit-media--render-window)))
+  (let ((window (appkit-view-display-window)))
     (max 1
          (or (and window
                   (frame-char-height (window-frame window)))

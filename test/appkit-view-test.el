@@ -440,13 +440,18 @@
                   (lambda (&rest arguments)
                     (push arguments requests))))
          (appkit-view-enable-responsive-geometry view)
+         (appkit-view-enable-responsive-geometry view)
          (should (= 28 (appkit-view-responsive-width 2)))
+         (dolist (hook
+                  (list window-size-change-functions
+                        window-selection-change-functions
+                        display-line-numbers-mode-hook
+                        text-scale-mode-hook))
+           (should (memq #'appkit-view-refresh-responsive-geometry hook)))
          (should
-          (memq #'appkit-view--on-window-geometry-change
-                window-size-change-functions))
-         (should
-          (memq #'appkit-view--on-window-geometry-change
-                window-selection-change-functions))
+          (= 1
+             (cl-count #'appkit-view-refresh-responsive-geometry
+                       window-size-change-functions)))
          (setq width 40)
          (run-hook-with-args
           'window-size-change-functions (selected-window))

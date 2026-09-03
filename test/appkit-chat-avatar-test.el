@@ -26,8 +26,8 @@
              (lambda (&rest _args) (cons 32 32)))
             ((symbol-function 'appkit-chat-avatar-column-pixel-width)
              (lambda () 8))
-            ((symbol-function 'appkit-chat-avatar--graphical-display-p)
-             (lambda () t)))
+            ((symbol-function 'display-graphic-p)
+             (lambda (&optional _frame) t)))
     (let* ((prefixes
             (appkit-chat-avatar-prefixes
              '(image :type png :data "avatar") "A"
@@ -52,8 +52,8 @@
   (let ((line-spacing 7)
         (text-scale-mode-amount 3)
         (text-scale-mode-step 1.2))
-    (cl-letf (((symbol-function 'appkit-chat-avatar--render-window)
-               (lambda () nil))
+    (cl-letf (((symbol-function 'appkit-view-display-window)
+               (lambda (&rest _arguments) nil))
               ((symbol-function 'default-line-height) (lambda () 35))
               ((symbol-function 'line-pixel-height) (lambda () 99)))
       (should (= 35 (appkit-chat-avatar-line-pixel-height))))))
@@ -63,8 +63,8 @@
     (insert "timeline row still being rendered")
     (goto-char 7)
     (let ((origin (point)))
-      (cl-letf (((symbol-function 'appkit-chat-avatar--render-window)
-                 (lambda () 'chat-window))
+      (cl-letf (((symbol-function 'appkit-view-display-window)
+                 (lambda (&rest _arguments) 'chat-window))
                 ((symbol-function 'window-font-height)
                  (lambda (&rest _args)
                    (goto-char (point-max))
@@ -81,8 +81,8 @@
         (should (= origin (point)))))))
 
 (ert-deftest appkit-chat-avatar-pixel-spacer-keeps-tty-fallback ()
-  (cl-letf (((symbol-function 'appkit-chat-avatar--graphical-display-p)
-             (lambda () nil)))
+  (cl-letf (((symbol-function 'display-graphic-p)
+             (lambda (&optional _frame) nil)))
     (let ((spacer (appkit-chat-avatar--pixel-spacer-string 4 32)))
       (should (= 4 (string-width spacer)))
       (should-not (get-text-property 0 'display spacer)))))
@@ -98,15 +98,6 @@
                (appkit-chat-avatar-image-char-width
                 '(image :type png :data "avatar"))))))
 
-(ert-deftest appkit-chat-avatar-render-window-uses-canonical-view-window ()
-  (with-temp-buffer
-    (let ((buffer (current-buffer)))
-      (cl-letf (((symbol-function 'appkit-view-display-window)
-                 (lambda (candidate)
-                   (should (eq candidate buffer))
-                   'canonical-window)))
-        (should (eq 'canonical-window
-                    (appkit-chat-avatar--render-window)))))))
 
 (ert-deftest appkit-chat-avatar-resize-normalizes-both-axes ()
   (cl-letf (((symbol-function 'appkit-media-image-object-valid-p)
