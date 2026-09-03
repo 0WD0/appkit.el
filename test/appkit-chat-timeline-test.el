@@ -345,6 +345,9 @@
                  (lambda (_window update)
                    (should update)
                    window-end-position))
+                ((symbol-function 'pos-visible-in-window-p)
+                 (lambda (_position candidate _partially)
+                   (eq candidate window)))
                 ((symbol-function 'appkit-chat-timeline-footer-start-position)
                  (lambda () footer-position)))
         (should (= 900
@@ -381,6 +384,26 @@
         (list (appkit-chat-timeline-test--row 'same "one")
               (appkit-chat-timeline-test--row 'same "two"))))
       (should-not (appkit-chat-timeline-keys)))))
+
+(ert-deftest appkit-chat-timeline-owns-one-history-observer ()
+  (appkit-test-with-view
+    (let ((view (appkit-current-view)))
+      (appkit-chat-timeline-ensure
+       :printer (appkit-chat-timeline-test--printer
+                 (make-hash-table :test #'equal))
+       :anchor-property 'test-message-key)
+      (let ((old
+             (appkit-chat-timeline-install-history-observer
+              view :start-function #'ignore)))
+        (should (eq old (appkit-chat-timeline-scroll-observer)))
+        (let ((new
+               (appkit-chat-timeline-install-history-observer
+                view :end-function #'ignore)))
+          (should-not (appkit-scroll-observer-active-p old))
+          (should (eq new (appkit-chat-timeline-scroll-observer)))
+          (appkit-chat-timeline-reset)
+          (should-not (appkit-scroll-observer-active-p new))
+          (should-not (appkit-chat-timeline-scroll-observer)))))))
 
 (provide 'appkit-chat-timeline-test)
 

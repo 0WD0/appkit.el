@@ -487,7 +487,7 @@ state.  DISPLAY-FUNCTION is forwarded to video.el."
                      (generate-new-buffer (format "*%s Video*" label))))
          handle
          opened-p)
-    (unless (appkit-media--owner-live-p owner)
+    (unless (or (null owner) (appkit-owner-live-p owner))
       (user-error "%s: media owner is no longer live" label))
     (unless (appkit-media-video-session-live-p session)
       (error "%s: video session is closed" label))
@@ -507,7 +507,7 @@ state.  DISPLAY-FUNCTION is forwarded to video.el."
                   :buffer buffer :display-function display-function)))
             (unless (and (eq opened buffer)
                          (buffer-live-p buffer)
-                         (appkit-media--owner-live-p owner))
+                         (or (null owner) (appkit-owner-live-p owner)))
               (error "%s: video.el did not return its live viewer buffer"
                      label)))
           (with-current-buffer buffer
@@ -571,14 +571,14 @@ surface, or close the returned session."
          source
          cache-file
          cache-complete-function)
-    (unless (appkit-media--owner-live-p owner)
+    (unless (or (null owner) (appkit-owner-live-p owner))
       (user-error "%s: media owner is no longer live" label))
     (unless (memq cache-policy '(automatic none))
       (user-error "%s: invalid video cache policy: %S" label cache-policy))
     (cl-labels
         ((remember-cache
           (_player local-file)
-          (when (appkit-media--owner-live-p owner)
+          (when (or (null owner) (appkit-owner-live-p owner))
             (setf (alist-get 'file resource nil nil #'eq) local-file)
             (when (functionp cache-update-function)
               (funcall cache-update-function (copy-tree resource)))
@@ -1262,11 +1262,6 @@ Pass its path to CALLBACK, or a reason to ERRBACK."
       (appkit-media-copy-or-download-resource-async
        resource target callback errback))))
 
-(defun appkit-media--owner-live-p (owner)
-  "Return non-nil when OWNER is absent or a live Appkit app or view."
-  (or (null owner)
-      (appkit-app-live-p owner)
-      (appkit-view-live-p owner)))
 
 (defun appkit-media--start-owned-open-transfer
     (owner start success error)
@@ -1274,7 +1269,7 @@ Pass its path to CALLBACK, or a reason to ERRBACK."
 
 START receives guarded success and error callbacks.  A dead OWNER cancels the
 transfer, and callbacks arriving after owner death have no visible effect."
-  (unless (appkit-media--owner-live-p owner)
+  (unless (or (null owner) (appkit-owner-live-p owner))
     (user-error "Media owner is no longer live"))
   (let (transfer lifecycle-handle completed-p)
     (cl-labels
@@ -1283,7 +1278,7 @@ transfer, and callbacks arriving after owner death have no visible effect."
              (setq completed-p t)
              (when lifecycle-handle
                (appkit-retire-handle lifecycle-handle))
-             (when (appkit-media--owner-live-p owner)
+             (when (or (null owner) (appkit-owner-live-p owner))
                (funcall callback value)))))
       (setq transfer
             (funcall start
@@ -1292,7 +1287,7 @@ transfer, and callbacks arriving after owner death have no visible effect."
       (when (and owner
                  (appkit-media-transfer-p transfer)
                  (not completed-p))
-        (if (appkit-media--owner-live-p owner)
+        (if (or (null owner) (appkit-owner-live-p owner))
             (condition-case err
                 (setq lifecycle-handle
                       (appkit-register-handle
@@ -1326,9 +1321,9 @@ the transfer or viewer buffer."
              (funcall cache-update-function (copy-tree resource)))
            local-file)
          (open-local (local-file)
-           (when (appkit-media--owner-live-p owner)
+           (when (or (null owner) (appkit-owner-live-p owner))
              (let ((remembered (remember local-file)))
-               (when (appkit-media--owner-live-p owner)
+               (when (or (null owner) (appkit-owner-live-p owner))
                  (appkit-media-open-file remembered))))))
       (pcase kind
         ('video
