@@ -145,8 +145,8 @@ name shared dependencies.  POSITION requests semantic position preservation."
 
 STRUCTURE, PART, PARTS, ENTRY, ENTRIES, RESOURCE, RESOURCES, and POSITION have
 the same meaning as in `appkit-invalidate'.  DELAY is forwarded to
-`appkit-schedule-sync'.  Return the owned timer object, or nil when VIEW is no
-longer live."
+`appkit-schedule-sync'.  Pending View events also count as synchronization
+work.  Return the owned timer object, or nil when VIEW is no longer live."
   (when-let* ((state
                (appkit-invalidate
                 view
@@ -158,11 +158,12 @@ longer live."
                 :resource resource
                 :resources resources
                 :position position)))
-    (when (appkit-invalidations-any-p state)
+    (when (or (appkit-invalidations-any-p state)
+              (appkit-view-pending-events view))
       (appkit-schedule-sync view :delay delay))))
 
 (defun appkit-sync-invalidations (view)
-  "Synchronize VIEW from one coalesced invalidation snapshot."
+  "Synchronize VIEW from one invalidation and event snapshot."
   (when (appkit-view-live-p view)
     (let* ((state (appkit-view-invalidations-ensure view))
            (handle (appkit-invalidations-scheduled-handle state)))
@@ -170,23 +171,28 @@ longer live."
       (when (appkit-handle-p handle) (appkit-cancel-handle handle))
       (if (appkit-invalidations-syncing-p state)
           (appkit-schedule-sync view)
-        (when (appkit-invalidations-any-p state)
+        (when (or (appkit-invalidations-any-p state)
+                  (appkit-view-pending-events view))
           (let ((sync (appkit-view-sync-function view)))
             (unless (functionp sync)
               (error "Appkit view %S has no invalidation sync function"
                      (appkit-view-id view)))
-            (let ((snapshot (appkit-invalidations-take state))
-                  completed-p)
+            (let* ((snapshot (appkit-invalidations-take state))
+                   (events (appkit-view-pending-events-snapshot view))
+                   (event-count (length events))
+                   completed-p)
               (setf (appkit-invalidations-syncing-p state) t)
               (unwind-protect
                   (appkit-with-live-view view
-                    (funcall sync view snapshot)
+                    (funcall sync view snapshot events)
+                    (appkit-view-acknowledge-events view event-count)
                     (setq completed-p t))
                 (unless completed-p
                   (appkit-invalidations-merge state snapshot))
                 (setf (appkit-invalidations-syncing-p state) nil)
                 (when (and completed-p
-                           (appkit-invalidations-any-p state))
+                           (or (appkit-invalidations-any-p state)
+                               (appkit-view-pending-events view)))
                   (appkit-schedule-sync view))))))))))
 
 (provide 'appkit-invalidation)
