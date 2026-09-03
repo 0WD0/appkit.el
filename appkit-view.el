@@ -566,9 +566,7 @@ presentation update."
                     (or (appkit-view-window-fill-column
                          appkit-view--responsive-window)
                         fill-column)))
-      (add-hook 'window-size-change-functions
-                #'appkit-view-refresh-responsive-geometry nil t)
-      (add-hook 'window-selection-change-functions
+      (add-hook 'window-state-change-functions
                 #'appkit-view-refresh-responsive-geometry nil t)
       (add-hook 'display-line-numbers-mode-hook
                 #'appkit-view-refresh-responsive-geometry nil t)
