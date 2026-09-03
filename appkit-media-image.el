@@ -389,8 +389,8 @@ The returned plist contains `:width', `:height', `:gap', `:offset', and
                            :width width)))
            (strip-width
             (+ (apply #'+ (mapcar (lambda (cell)
-                                   (plist-get cell :width))
-                                 geometry))
+                                    (plist-get cell :width))
+                                  geometry))
                (* gap (1- (length geometry)))))
            (offset
             (min (max 0 (round (or pixel-offset 0)))
@@ -1063,7 +1063,6 @@ error when complete input does not begin with a PNG signature."
                (buffer-substring-no-properties latest-start latest-end)))
           (delete-region (point-min) position)
           latest)))))
-
 
 (defun appkit-media-bytes-to-extension (bytes fallback-extension)
   "Infer an image extension from BYTES, else return FALLBACK-EXTENSION."
