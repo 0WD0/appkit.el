@@ -445,6 +445,24 @@ is nil, update only the frame and position without inspecting ROWS."
       (appkit-projection--restore-position projection position snapshot))
     (appkit-projection--keys projection)))
 
+(cl-defun appkit-projection-sync-diff
+    (view rows diff &key header footer (position 'preserve))
+  "Synchronize VIEW with ROWS according to projection DIFF.
+
+HEADER, FOOTER, and POSITION follow `appkit-projection-sync'.  ROWS is inspected
+only when DIFF requires reconciliation."
+  (unless (appkit-projection-diff-p diff)
+    (signal 'wrong-type-argument (list 'appkit-projection-diff-p diff)))
+  (appkit-projection-sync
+   view rows
+   :header header
+   :footer footer
+   :force-keys (appkit-projection-diff-force-keys diff)
+   :changed-dependencies
+   (appkit-projection-diff-changed-dependencies diff)
+   :position position
+   :reconcile-p (appkit-projection-diff-reconcile-p diff)))
+
 (provide 'appkit-projection)
 
 ;;; appkit-projection.el ends here
