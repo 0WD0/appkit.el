@@ -47,6 +47,28 @@
            (appkit-invalidations-resource-keys invalidations)
            (appkit-invalidations-position-p invalidations))))
 
+(defun appkit-invalidations-affect-p (invalidations parts)
+  "Return non-nil when INVALIDATIONS affect content in domain PARTS.
+
+Structure, entry, resource, and geometry invalidations affect every content
+surface.  Other named parts affect only a surface that includes them in PARTS.
+Position is a restoration intent and does not by itself affect content."
+  (unless (appkit-invalidations-p invalidations)
+    (signal 'wrong-type-argument
+            (list 'appkit-invalidations-p invalidations)))
+  (unless (listp parts)
+    (signal 'wrong-type-argument (list 'listp parts)))
+  (let ((pending-parts (appkit-invalidations-parts invalidations))
+        affected-p)
+    (while (and pending-parts (not affected-p))
+      (setq affected-p (memq (pop pending-parts) parts)))
+    (and (or (appkit-invalidations-structure-p invalidations)
+             (appkit-invalidations-entry-keys invalidations)
+             (appkit-invalidations-resource-keys invalidations)
+             (memq 'geometry (appkit-invalidations-parts invalidations))
+             affected-p)
+         t)))
+
 (defun appkit--invalidation-values (singular plural)
   "Normalize SINGULAR and PLURAL invalidation values into a list."
   (delete-dups
