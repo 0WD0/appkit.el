@@ -98,38 +98,15 @@
                (appkit-chat-avatar-image-char-width
                 '(image :type png :data "avatar"))))))
 
-(ert-deftest appkit-chat-avatar-render-window-prefers-selected-frame ()
-  (with-temp-buffer
-    (let ((buffer (current-buffer))
-          calls)
-      (cl-letf (((symbol-function 'selected-window) (lambda () 'other-window))
-                ((symbol-function 'selected-frame) (lambda () 'selected-frame))
-                ((symbol-function 'window-live-p) (lambda (_window) t))
-                ((symbol-function 'window-buffer)
-                 (lambda (window)
-                   (if (eq window 'other-window) 'other-buffer buffer)))
-                ((symbol-function 'get-buffer-window-list)
-                 (lambda (candidate _minibuffer frames &optional _indirect)
-                   (should (eq candidate buffer))
-                   (push frames calls)
-                   (pcase frames
-                     ('selected-frame '(same-frame-window))
-                     ('visible '(visible-window))
-                     (_ '(other-frame-window))))))
-        (should (eq 'same-frame-window
-                    (appkit-chat-avatar--render-window)))
-        (should (equal '(selected-frame) calls))))))
-
-(ert-deftest appkit-chat-avatar-render-window-prefers-selected-window ()
+(ert-deftest appkit-chat-avatar-render-window-uses-canonical-view-window ()
   (with-temp-buffer
     (let ((buffer (current-buffer)))
-      (cl-letf (((symbol-function 'selected-window) (lambda () 'selected))
-                ((symbol-function 'window-live-p) (lambda (_window) t))
-                ((symbol-function 'window-buffer) (lambda (_window) buffer))
-                ((symbol-function 'get-buffer-window-list)
-                 (lambda (&rest _args)
-                   (ert-fail "window search should not run"))))
-        (should (eq 'selected (appkit-chat-avatar--render-window)))))))
+      (cl-letf (((symbol-function 'appkit-view-display-window)
+                 (lambda (candidate)
+                   (should (eq candidate buffer))
+                   'canonical-window)))
+        (should (eq 'canonical-window
+                    (appkit-chat-avatar--render-window)))))))
 
 (ert-deftest appkit-chat-avatar-resize-normalizes-both-axes ()
   (cl-letf (((symbol-function 'appkit-media-image-object-valid-p)

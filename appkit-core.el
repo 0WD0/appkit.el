@@ -71,6 +71,17 @@
   update-depth
   alive-p)
 
+(cl-defstruct (appkit-view-operation
+               (:constructor appkit-view-operation--create))
+  "One keyed asynchronous operation owned by an Appkit view."
+  view
+  key
+  token
+  object
+  cancel-function
+  handle
+  state)
+
 (defvar appkit--app-kinds (make-hash-table :test #'eq)
   "Registered app kind definitions keyed by symbol.")
 
@@ -142,6 +153,13 @@ ID identifies one concrete account or backend session.  STATE and TRANSPORT
        (appkit-view-alive-p view)
        (buffer-live-p (appkit-view-buffer view))
        (appkit-app-live-p (appkit-view-app view))))
+
+(defun appkit-owner-live-p (owner)
+  "Return non-nil when OWNER is a live Appkit app or view."
+  (cond
+   ((appkit-app-p owner) (appkit-app-live-p owner))
+   ((appkit-view-p owner) (appkit-view-live-p owner))
+   (t nil)))
 
 (defun appkit--owner-handles (owner)
   "Return lifecycle handle list belonging to OWNER."
@@ -218,6 +236,116 @@ CANCEL-FUNCTION, when non-nil, receives OBJECT."
         (when (or (appkit-app-p owner) (appkit-view-p owner))
           (appkit--set-owner-handles
            owner (delq handle (appkit--owner-handles owner))))))
+    t))
+
+(defun appkit-view-operation--current-entry-p (operation)
+  "Return non-nil when OPERATION occupies its view request slot."
+  (and (appkit-view-operation-p operation)
+       (eq operation
+           (gethash
+            (appkit-view-operation-key operation)
+            (appkit-view-request-table
+             (appkit-view-operation-view operation))))))
+
+(defun appkit-view-operation-current-p (operation)
+  "Return non-nil when OPERATION may still update its owning view."
+  (and (appkit-view-operation-p operation)
+       (eq (appkit-view-operation-state operation) 'active)
+       (appkit-view-live-p (appkit-view-operation-view operation))
+       (appkit-view-operation--current-entry-p operation)))
+
+(defun appkit-view-operation--cancel-object (operation object)
+  "Cancel OBJECT through OPERATION's transport cancellation boundary."
+  (when (and object
+             (functionp (appkit-view-operation-cancel-function operation)))
+    (funcall (appkit-view-operation-cancel-function operation) object)))
+
+(defun appkit-view-operation--cancel-owned (operation)
+  "Cancel lifecycle-owned OPERATION without recursing through its handle."
+  (when (and (appkit-view-operation-p operation)
+             (eq (appkit-view-operation-state operation) 'active))
+    (when (appkit-view-operation--current-entry-p operation)
+      (remhash
+       (appkit-view-operation-key operation)
+       (appkit-view-request-table (appkit-view-operation-view operation))))
+    (setf (appkit-view-operation-state operation) 'cancelled)
+    (let ((object (appkit-view-operation-object operation)))
+      (setf (appkit-view-operation-object operation) nil)
+      (appkit-view-operation--cancel-object operation object))
+    t))
+
+(defun appkit-view-operation-cancel (view key)
+  "Cancel VIEW's current asynchronous operation under semantic KEY."
+  (unless (appkit-view-p view)
+    (signal 'wrong-type-argument (list 'appkit-view-p view)))
+  (when-let* ((operation (gethash key (appkit-view-request-table view))))
+    (unless (appkit-view-operation-p operation)
+      (error "Appkit view request slot %S contains a foreign value" key))
+    (or (appkit-cancel-handle (appkit-view-operation-handle operation))
+        (appkit-view-operation--cancel-owned operation))))
+
+(cl-defun appkit-view-operation-begin
+    (view key &key cancel-function)
+  "Begin and return VIEW's newest asynchronous operation under KEY.
+
+An existing operation under KEY is canceled first.  CANCEL-FUNCTION, when
+non-nil, receives the transport object later supplied to
+`appkit-view-operation-bind'."
+  (unless (appkit-view-live-p view)
+    (error "Cannot begin an operation for a dead Appkit view"))
+  (unless (or (null cancel-function) (functionp cancel-function))
+    (error "Appkit operation cancellation is not callable: %S"
+           cancel-function))
+  (appkit-view-operation-cancel view key)
+  (let* ((operation
+          (appkit-view-operation--create
+           :view view
+           :key key
+           :token (make-symbol "appkit-view-operation-")
+           :cancel-function cancel-function
+           :state 'active))
+         (handle
+          (appkit-register-handle
+           view 'view-operation operation
+           #'appkit-view-operation--cancel-owned)))
+    (setf (appkit-view-operation-handle operation) handle)
+    (puthash key operation (appkit-view-request-table view))
+    operation))
+
+(cl-defun appkit-view-operation-bind
+    (operation object &key (cancel-function nil cancel-function-p))
+  "Bind transport OBJECT to OPERATION and return OBJECT.
+
+When CANCEL-FUNCTION is supplied, replace the operation's cancellation
+boundary.  If OPERATION was canceled before transport startup returned, cancel
+OBJECT immediately.  If it already finished normally, leave OBJECT alone."
+  (unless (appkit-view-operation-p operation)
+    (signal 'wrong-type-argument
+            (list 'appkit-view-operation-p operation)))
+  (when cancel-function-p
+    (unless (or (null cancel-function) (functionp cancel-function))
+      (error "Appkit operation cancellation is not callable: %S"
+             cancel-function))
+    (setf (appkit-view-operation-cancel-function operation) cancel-function))
+  (pcase (appkit-view-operation-state operation)
+    ('active
+     (setf (appkit-view-operation-object operation) object))
+    ('cancelled
+     (appkit-view-operation--cancel-object operation object)))
+  object)
+
+(defun appkit-view-operation-finish (operation)
+  "Retire current OPERATION after normal settlement.
+
+Stale or duplicate completions are inert and return nil."
+  (when (appkit-view-operation-current-p operation)
+    (remhash
+     (appkit-view-operation-key operation)
+     (appkit-view-request-table (appkit-view-operation-view operation)))
+    (setf (appkit-view-operation-state operation) 'finished
+          (appkit-view-operation-object operation) nil
+          (appkit-view-operation-cancel-function operation) nil)
+    (appkit-retire-handle (appkit-view-operation-handle operation))
     t))
 
 (defun appkit--run-cleanup-items (items function condition-function)
