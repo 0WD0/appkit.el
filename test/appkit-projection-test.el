@@ -149,9 +149,12 @@
       (should (string-prefix-p "Ready\n" (buffer-string)))
       (let ((invalidations (appkit-invalidations-create)))
         (setf (appkit-invalidations-parts invalidations) '(frame))
-        (appkit-projection-sync-invalidations
-            view invalidations (error "Frame-only sync evaluated rows")
-          :header "Settled\n"))
+        (cl-letf (((symbol-function 'appkit-projection-keys)
+                   (lambda (_view)
+                     (ert-fail "Frame-only sync inspected existing keys"))))
+          (appkit-projection-sync-invalidations
+              view invalidations (error "Frame-only sync evaluated rows")
+            :header "Settled\n")))
       (should (= 1 (gethash 'a prints)))
       (should (equal '(a) (appkit-projection-keys view)))
       (should (string-prefix-p "Settled\n" (buffer-string))))))
