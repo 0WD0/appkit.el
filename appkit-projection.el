@@ -474,16 +474,29 @@ RECONCILE-PARTS, RECONCILE, FORCE-KEYS, and CHANGED-DEPENDENCIES extend common
 diff derivation.  HEADER, FOOTER, and POSITION control the projection frame."
   (declare (indent 3) (debug t))
   (let ((view-value (make-symbol "view"))
+        (invalidations-value (make-symbol "invalidations"))
+        (changed-dependencies-value (make-symbol "changed-dependencies"))
+        (parts (make-symbol "parts"))
+        (resources (make-symbol "resources"))
         (diff (make-symbol "diff")))
     `(let* ((,view-value ,view)
+            (,invalidations-value ,invalidations)
+            (,changed-dependencies-value ,changed-dependencies)
+            (,parts (appkit-invalidations-parts ,invalidations-value))
+            (,resources
+             (appkit-invalidations-resource-keys ,invalidations-value))
             (,diff
              (appkit-projection-diff-derive
-              ,invalidations
-              :existing-keys (appkit-projection-keys ,view-value)
+              ,invalidations-value
+              :existing-keys
+              (and (or (memq 'geometry ,parts)
+                       (memq 'all ,resources)
+                       (memq 'all ,changed-dependencies-value))
+                   (appkit-projection-keys ,view-value))
               :reconcile-parts ,reconcile-parts
               :reconcile ,reconcile
               :force-keys ,force-keys
-              :changed-dependencies ,changed-dependencies)))
+              :changed-dependencies ,changed-dependencies-value)))
        (appkit-projection-sync-diff
         ,view-value
         (and (appkit-projection-diff-reconcile-p ,diff) ,rows)
