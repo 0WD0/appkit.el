@@ -125,7 +125,7 @@ cached entries."
        t))
 
 (defun appkit-chat-history-request-owner ()
-  "Return the opaque owner of the active history request, or nil."
+  "Return the View operation owning the active history request, or nil."
   (appkit-chat-history--state-owner
    (appkit-chat-history-init-state)))
 
@@ -243,46 +243,21 @@ replacement owner."
             (appkit-chat-history--state-owner state) operation)
       operation)))
 
-(defun appkit-chat-history-request-begin (kind &optional owner)
-  "Begin a history request of opaque KIND and return its OWNER.
-
-This compatibility entry point accepts an opaque client OWNER.  When OWNER is
-nil, allocate a fresh cons whose identity is unique.  Beginning a request
-supersedes any different previous owner.  Passing the same OWNER again changes
-KIND without ending a multi-stage logical request.  New View-backed requests
-should use `appkit-chat-history-request-start'."
-  (unless kind
-    (error "Appkit chat history request kind must be non-nil"))
-  (let* ((state (appkit-chat-history-init-state))
-         (owner (or owner (list 'appkit-chat-history-request kind)))
-         (previous (appkit-chat-history--state-owner state)))
-    (unless (eq owner previous)
-      (appkit-chat-history-request-cancel))
-    (setf (appkit-chat-history--state-loading state) kind
-          (appkit-chat-history--state-owner state) owner)
-    owner))
 
 (defun appkit-chat-history-request-current-p (owner)
-  "Return non-nil when non-nil OWNER owns the active history request.
-
-Ownership is compared by identity.  An `appkit-view-operation' must also
-remain current for its captured View state."
-  (and owner
+  "Return non-nil when OWNER is the current history View operation."
+  (and (appkit-view-operation-p owner)
        (eq owner
            (appkit-chat-history--state-owner
             (appkit-chat-history-init-state)))
-       (or (not (appkit-view-operation-p owner))
-           (appkit-view-operation-current-p owner))))
+       (appkit-view-operation-current-p owner)))
 
 (defun appkit-chat-history-request-end (owner)
-  "Finish current OWNER and return non-nil when settlement won.
+  "Finish current OWNER operation and return non-nil when settlement won.
 
-For an `appkit-view-operation', this is the settlement fence.  A stale OWNER
-leaves both the replacement owner and its loading kind intact."
+A stale OWNER leaves both the replacement owner and its loading kind intact."
   (when (appkit-chat-history-request-current-p owner)
-    (let ((finished
-           (or (not (appkit-view-operation-p owner))
-               (appkit-view-operation-finish owner))))
+    (let ((finished (appkit-view-operation-finish owner)))
       (when (and finished
                  (eq owner
                      (appkit-chat-history--state-owner
@@ -293,16 +268,15 @@ leaves both the replacement owner and its loading kind intact."
       finished)))
 
 (defun appkit-chat-history-request-cancel ()
-  "Cancel and clear the active history request, returning its owner.
+  "Cancel and clear the active history request, returning its View operation.
 
-An `appkit-view-operation' recursively cancels its transport children before
-later callbacks reach the settlement fence.  Opaque compatibility owners are
-only invalidated."
+Cancellation recursively revokes the operation's transport children before
+later callbacks reach the settlement fence."
   (let* ((state (appkit-chat-history-init-state))
          (owner (appkit-chat-history--state-owner state)))
     (setf (appkit-chat-history--state-loading state) nil
           (appkit-chat-history--state-owner state) nil)
-    (when (appkit-view-operation-p owner)
+    (when owner
       (appkit-view-operation-cancel
        (appkit-view-operation-view owner)
        (appkit-view-operation-key owner)))

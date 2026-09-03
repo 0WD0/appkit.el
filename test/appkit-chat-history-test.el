@@ -3,6 +3,10 @@
 (require 'ert)
 
 (require 'appkit-chat-history)
+(require 'appkit-test-helper
+         (expand-file-name
+          "00-appkit-test-helper"
+          (file-name-directory (or load-file-name buffer-file-name))))
 
 (ert-deftest appkit-chat-history-reset-is-an-unknown-production-window ()
   (with-temp-buffer
@@ -90,10 +94,12 @@
       (should (equal '(("cached" . 1)) (plist-get slice :entries))))))
 
 (ert-deftest appkit-chat-history-request-owners-reject-stale-callbacks ()
-  (with-temp-buffer
-    (appkit-chat-history-reset-state)
-    (let* ((older-owner (appkit-chat-history-request-begin 'older))
-           (newer-owner (appkit-chat-history-request-begin 'newer)))
+  (appkit-test-with-view
+    (let* ((view (appkit-current-view))
+           (older-owner
+            (appkit-chat-history-request-start view 'older))
+           (newer-owner
+            (appkit-chat-history-request-start view 'newer)))
       (should-not (eq older-owner newer-owner))
       (should-not (appkit-chat-history-request-current-p older-owner))
       (should (appkit-chat-history-request-current-p newer-owner))
@@ -104,15 +110,6 @@
       (should-not (appkit-chat-history-loading-p))
       (should-not (appkit-chat-history-request-owner)))))
 
-(ert-deftest appkit-chat-history-request-owner-can-cross-client-stages ()
-  (with-temp-buffer
-    (let ((owner (list 'initial-chain)))
-      (should (eq owner
-                  (appkit-chat-history-request-begin 'initial owner)))
-      (should (eq owner
-                  (appkit-chat-history-request-begin 'around owner)))
-      (should (eq 'around (appkit-chat-history-loading)))
-      (should (appkit-chat-history-request-end owner)))))
 
 (ert-deftest appkit-chat-history-operation-owns-replacement-transport ()
   (let ((app (appkit-start-app 'appkit-test :id 'history))
@@ -166,11 +163,13 @@
     (should-not (appkit-chat-history-newer-stalled-p))))
 
 (ert-deftest appkit-chat-history-window-clear-discards-window-edge-facts ()
-  (with-temp-buffer
+  (appkit-test-with-view
     (appkit-chat-history-window-set "a" "b")
     (appkit-chat-history-older-loaded-set t)
     (appkit-chat-history-newer-stalled-set)
-    (let ((owner (appkit-chat-history-request-begin 'around)))
+    (let ((owner
+           (appkit-chat-history-request-start
+            (appkit-current-view) 'around)))
       (appkit-chat-history-window-clear)
       (should-not (appkit-chat-history-window-known-p))
       (should-not (appkit-chat-history-older-loaded-p))
@@ -179,8 +178,10 @@
       (should (eq 'around (appkit-chat-history-loading))))))
 
 (ert-deftest appkit-chat-history-request-cancel-invalidates-owner ()
-  (with-temp-buffer
-    (let ((owner (appkit-chat-history-request-begin 'latest)))
+  (appkit-test-with-view
+    (let ((owner
+           (appkit-chat-history-request-start
+            (appkit-current-view) 'latest)))
       (should (eq owner (appkit-chat-history-request-cancel)))
       (should-not (appkit-chat-history-loading-p))
       (should-not (appkit-chat-history-request-owner))
@@ -188,7 +189,7 @@
       (should-not (appkit-chat-history-request-end owner)))))
 
 (ert-deftest appkit-chat-history-autoload-gates-window-state-and-position ()
-  (with-temp-buffer
+  (appkit-test-with-view
     (appkit-chat-history-reset-state)
     (should-not (appkit-chat-history-autoload-older-p 10 1 20))
     (should-not (appkit-chat-history-autoload-newer-p 95 100 20))
@@ -202,14 +203,16 @@
     (appkit-chat-history-newer-stalled-set)
     (should-not (appkit-chat-history-autoload-newer-p 95 100 20))
     (appkit-chat-history-newer-stalled-clear)
-    (let ((owner (appkit-chat-history-request-begin 'newer)))
+    (let ((owner
+           (appkit-chat-history-request-start
+            (appkit-current-view) 'newer)))
       (should-not (appkit-chat-history-autoload-newer-p 95 100 20))
       (appkit-chat-history-request-end owner))
     (appkit-chat-history-window-set "a" nil)
     (should-not (appkit-chat-history-autoload-newer-p 95 100 20))))
 
 (ert-deftest appkit-chat-history-delimiter-reflects-window-and-loading ()
-  (with-temp-buffer
+  (appkit-test-with-view
     (appkit-chat-history-reset-state)
     (should (equal "········"
                    (appkit-chat-history-delimiter-string 8 :face nil)))
@@ -219,7 +222,9 @@
     (appkit-chat-history-window-set "a" "b")
     (should (equal "········"
                    (appkit-chat-history-delimiter-string 8 :face nil)))
-    (let ((owner (appkit-chat-history-request-begin 'newer)))
+    (let ((owner
+           (appkit-chat-history-request-start
+            (appkit-current-view) 'newer)))
       (let ((delimiter
              (appkit-chat-history-delimiter-string
               14 :loading-text "loading" :face nil)))
