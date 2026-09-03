@@ -114,6 +114,45 @@
       (should (eq 'around (appkit-chat-history-loading)))
       (should (appkit-chat-history-request-end owner)))))
 
+(ert-deftest appkit-chat-history-operation-owns-replacement-transport ()
+  (let ((app (appkit-start-app 'appkit-test :id 'history))
+        view
+        cancelled)
+    (unwind-protect
+        (progn
+          (setq view
+                (appkit-open-view
+                 :app app :id 'history :mode 'special-mode
+                 :buffer-name " *appkit-chat-history-owner*"))
+          (with-current-buffer (appkit-view-buffer view)
+            (let* ((older
+                    (appkit-chat-history-request-start view 'older))
+                   (_older-handle
+                    (appkit-register-handle
+                     older 'function 'older-request
+                     (lambda (request) (push request cancelled))))
+                   (newer
+                    (appkit-chat-history-request-start view 'newer))
+                   (newer-handle
+                    (appkit-register-handle
+                     newer 'function 'newer-request
+                     (lambda (request) (push request cancelled)))))
+              (should (appkit-view-operation-p older))
+              (should (eq view (appkit-view-operation-view older)))
+              (should (equal cancelled '(older-request)))
+              (should-not (appkit-chat-history-request-current-p older))
+              (should (appkit-chat-history-request-current-p newer))
+              (should-not (appkit-chat-history-request-end older))
+              (appkit-retire-handle newer-handle)
+              (should (appkit-chat-history-request-end newer))
+              (should-not (memq 'newer-request cancelled))
+              (should-not (appkit-chat-history-loading-p))
+              (should-not (appkit-chat-history-request-owner)))))
+      (when (appkit-view-p view)
+        (appkit-kill-view view t))
+      (when (appkit-app-live-p app)
+        (appkit-stop-app app)))))
+
 (ert-deftest appkit-chat-history-newer-stall-follows-the-exact-edge ()
   (with-temp-buffer
     (appkit-chat-history-window-set "a" "b")
