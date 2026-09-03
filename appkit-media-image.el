@@ -25,6 +25,7 @@
 (require 'seq)
 (require 'svg nil t)
 (require 'appkit-core)
+(require 'appkit-view)
 (require 'appkit-media-card)
 
 (defgroup appkit-media nil
@@ -132,14 +133,31 @@ have been displayed."
   (with-current-buffer (or buffer (current-buffer))
     (appkit-media--teardown-inline-animation-occurrences)))
 
-(defun appkit-media-inline-image-rendering-available-p ()
-  "Return non-nil when the current frame can render inline images."
-  (and (display-images-p)
-       (or (image-type-available-p 'png)
-           (image-type-available-p 'webp)
-           (image-type-available-p 'jpeg)
-           (image-type-available-p 'gif)
-           (image-type-available-p 'imagemagick))))
+(defun appkit-media-inline-image-rendering-available-p (&optional frame)
+  "Return non-nil when FRAME can render inline images.
+
+FRAME defaults to the selected frame."
+  (if frame
+      (and (frame-live-p frame)
+           (with-selected-frame frame
+             (appkit-media-inline-image-rendering-available-p)))
+    (and (display-images-p)
+         (or (image-type-available-p 'png)
+             (image-type-available-p 'webp)
+             (image-type-available-p 'jpeg)
+             (image-type-available-p 'gif)
+             (image-type-available-p 'imagemagick)))))
+
+(defun appkit-media-image-capable-frame (&optional buffer)
+  "Return an image-capable frame suitable for rendering BUFFER.
+
+Prefer BUFFER's canonical graphical display window, then another live
+image-capable frame.  Return nil when no such frame exists."
+  (or (appkit-view-display-frame
+       buffer #'appkit-media-inline-image-rendering-available-p)
+      (seq-find
+       #'appkit-media-inline-image-rendering-available-p
+       (frame-list))))
 
 (defun appkit-media-image-object-valid-p (image)
   "Return non-nil when IMAGE can be rendered by Emacs."
@@ -389,7 +407,7 @@ The returned plist contains `:width', `:height', `:gap', `:offset', and
 
 (defun appkit-media-horizontal-strip-image
     (items pixel-height pixel-gap &optional pixel-offset)
-  "Return ITEMS rendered from backend-neutral horizontal scene geometry.
+  "Return ITEMS rendered at PIXEL-HEIGHT with PIXEL-GAP scene spacing.
 
 Each item may contain `:file', `:width', `:height', `:id', `:display-width',
 `:fit', and `:play-icon'.  Optional PIXEL-OFFSET moves that scene x coordinate
@@ -774,24 +792,24 @@ the image's protocol alt text.  HELP-ECHO describes ACTION."
         (appkit-media--install-inline-animation-discovery)))))
 
 (defun appkit-media--char-pixel-width ()
-  "Return the default character width in pixels for the current frame."
-  (max 1 (frame-char-width)))
+  "Return one default-face column width for the current render target."
+  (save-excursion
+    (let ((window (appkit-media--render-window)))
+      (max 1
+           (or (and window
+                    (ignore-errors (window-font-width window 'default)))
+               (and (fboundp 'string-pixel-width)
+                    (ignore-errors
+                      (string-pixel-width
+                       (propertize " " 'face 'default)
+                       (current-buffer))))
+               (frame-char-width)
+               1)))))
 
 (defun appkit-media--render-window ()
-  "Return the preferred live window displaying the current buffer."
-  (let* ((buffer (current-buffer))
-         (selected (selected-window)))
-    (cond
-     ((and (window-live-p selected)
-           (eq (window-buffer selected) buffer))
-      selected)
-     ((cl-find-if #'window-live-p
-                  (get-buffer-window-list buffer nil (selected-frame))))
-     ((cl-find-if #'window-live-p
-                  (get-buffer-window-list buffer nil 'visible)))
-     (t
-      (cl-find-if #'window-live-p
-                  (get-buffer-window-list buffer nil t))))))
+  "Return the canonical live window displaying the current buffer."
+  (appkit-view-display-window (current-buffer)))
+
 
 (defun appkit-media--char-pixel-height ()
   "Return the default character height for the current buffer in pixels.
@@ -811,8 +829,13 @@ return the source image height instead of a character height."
                16)))))
 
 (defun appkit-media--base-char-pixel-height ()
-  "Return the unscaled default-face character height in pixels."
-  (max 1 (or (frame-char-height) 16)))
+  "Return unscaled default-face height for the current render target."
+  (let ((window (appkit-media--render-window)))
+    (max 1
+         (or (and window
+                  (frame-char-height (window-frame window)))
+             (frame-char-height)
+             16))))
 
 (defun appkit-media--pixels->chars-width (pixels)
   "Convert PIXELS to character columns using current frame metrics."
@@ -1014,7 +1037,7 @@ Display with `appkit-media-one-line-image-display-string'."
   "Remove complete PNG frames from BUFFER and return only the latest.
 
 BUFFER defaults to the current buffer and must be unibyte.  Any incomplete
-trailing frame remains buffered for the next process-filter chunk.  Signal an
+trailing frame remains buffered for the next `process-filter' chunk.  Signal an
 error when complete input does not begin with a PNG signature."
   (with-current-buffer (or buffer (current-buffer))
     (when enable-multibyte-characters

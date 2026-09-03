@@ -37,7 +37,8 @@
   projection
   after-mutation-function
   mutation-depth
-  deferred-keys)
+  deferred-keys
+  scroll-observer)
 
 (defun appkit-chat-timeline--view ()
   "Return the live appkit view owning the current timeline."
@@ -54,7 +55,13 @@
 
 (defun appkit-chat-timeline-reset ()
   "Discard projected timeline state in the current buffer."
-  (setf (appkit-view-engine (appkit-chat-timeline--view)) nil))
+  (let* ((view (appkit-chat-timeline--view))
+         (state (appkit-chat-timeline--current-state)))
+    (when-let* ((observer
+                 (and state
+                      (appkit-chat-timeline--state-scroll-observer state))))
+      (appkit-scroll-observer-cancel observer))
+    (setf (appkit-view-engine view) nil)))
 
 (defun appkit-chat-timeline--projection (&optional state)
   "Return the shared projection embedded in chat timeline STATE."
@@ -139,6 +146,38 @@ new EWOC.  AFTER-MUTATION-FUNCTION runs after outer structural transactions."
                :mutation-depth 0
                :deferred-keys nil))))
     (appkit-chat-timeline-ewoc)))
+
+(defun appkit-chat-timeline-scroll-observer ()
+  "Return the current timeline's scroll observer, or nil."
+  (when-let* ((state (appkit-chat-timeline--current-state)))
+    (appkit-chat-timeline--state-scroll-observer state)))
+
+(cl-defun appkit-chat-timeline-install-history-observer
+    (view &key start-function end-function)
+  "Install VIEW's timeline history observer and return it.
+
+START-FUNCTION and END-FUNCTION receive the ordinary Appkit scroll observer
+arguments (WINDOW POSITION BOUNDARY).  The timeline controller owns observer
+replacement and uses its generated footer as the end boundary."
+  (unless (appkit-view-live-p view)
+    (error "Cannot observe history for a dead Appkit view"))
+  (with-current-buffer (appkit-view-buffer view)
+    (unless (eq view (appkit-current-view))
+      (error "Cannot observe history for a detached Appkit view"))
+    (let* ((state (appkit-chat-timeline--require-state))
+           (current
+            (appkit-chat-timeline--state-scroll-observer state)))
+      (when (appkit-scroll-observer-p current)
+        (appkit-scroll-observer-cancel current))
+      (let ((observer
+             (appkit-scroll-observer-install
+              view
+              :end-boundary-function
+              #'appkit-chat-timeline-footer-start-position
+              :start-function start-function
+              :end-function end-function)))
+        (setf (appkit-chat-timeline--state-scroll-observer state) observer)
+        observer))))
 
 (cl-defun appkit-chat-timeline-project
     (entries key-function &key context-function dependencies-function)

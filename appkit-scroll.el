@@ -32,6 +32,7 @@
   post-command-function
   window-scroll-function
   handles
+  deferred-check-handle
   checking-p
   active-p)
 
@@ -66,12 +67,16 @@ Numeric START-BOUND clamps the result after application-owned leading content."
         visible-start))))
 
 (defun appkit-scroll-window-visible-end-position (window &optional end-bound)
-  "Return WINDOW's visible end in the current buffer, or nil.
+  "Return WINDOW's verified visible end in the current buffer, or nil.
 
-Numeric END-BOUND clamps the result before application-owned trailing content."
+Numeric END-BOUND clamps the result before application-owned trailing content.
+An unredisplayed window may report `point-max' even when that position is not
+visible; reject such stale measurements instead of triggering edge actions."
   (when (and (window-live-p window)
              (eq (window-buffer window) (current-buffer)))
-    (when-let* ((visible-end (window-end window t)))
+    (when-let* ((visible-end (window-end window t))
+                (probe (max (point-min) (1- visible-end)))
+                ((pos-visible-in-window-p probe window t)))
       (if (numberp end-bound)
           (min visible-end end-bound)
         visible-end))))
@@ -96,7 +101,10 @@ composers when required."
   (if function (funcall function) fallback))
 
 (defun appkit-scroll-observer--check-window (observer window)
-  "Run OBSERVER callbacks for live WINDOW."
+  "Run OBSERVER callbacks for live WINDOW.
+
+Return `checked' after a reliable measurement, `unmeasured' when WINDOW is
+eligible but has not been redisplayed reliably, and nil otherwise."
   (let ((owner (appkit-scroll-observer-owner observer))
         (buffer (appkit-scroll-observer-buffer observer)))
     (when (and (appkit-scroll-observer-active-p observer)
@@ -116,7 +124,8 @@ composers when required."
                  (point-max)))
                (range
                 (appkit-scroll-window-visible-range window start end)))
-          (when range
+          (if (not range)
+              'unmeasured
             (setf (appkit-scroll-observer-checking-p observer) t)
             (unwind-protect
                 (progn
@@ -127,22 +136,62 @@ composers when required."
                   (when-let* ((function
                                (appkit-scroll-observer-end-function observer)))
                     (funcall function window (cdr range) end)))
-              (setf (appkit-scroll-observer-checking-p observer) nil))))))))
+              (setf (appkit-scroll-observer-checking-p observer) nil))
+            'checked))))))
+
+(defun appkit-scroll-observer--run-deferred-check (observer)
+  "Run OBSERVER's one deferred post-redisplay measurement."
+  (let ((handle (appkit-scroll-observer-deferred-check-handle observer)))
+    (setf (appkit-scroll-observer-deferred-check-handle observer) nil
+          (appkit-scroll-observer-handles observer)
+          (delq handle (appkit-scroll-observer-handles observer)))
+    (when handle
+      (appkit-retire-handle handle)))
+  (when (and (appkit-scroll-observer-active-p observer)
+             (appkit-view-live-p (appkit-scroll-observer-owner observer)))
+    (dolist (window
+             (get-buffer-window-list
+              (appkit-scroll-observer-buffer observer) nil t))
+      (appkit-scroll-observer--check-window observer window))))
+
+(defun appkit-scroll-observer--defer-check (observer)
+  "Schedule one lifecycle-owned post-redisplay check for OBSERVER."
+  (when (and (appkit-scroll-observer-active-p observer)
+             (appkit-view-live-p (appkit-scroll-observer-owner observer))
+             (not (appkit-scroll-observer-deferred-check-handle observer)))
+    (let* ((timer
+            (run-with-idle-timer
+             0 nil #'appkit-scroll-observer--run-deferred-check observer))
+           (handle
+            (appkit-register-handle
+             (appkit-scroll-observer-owner observer) 'timer timer)))
+      (setf (appkit-scroll-observer-deferred-check-handle observer) handle
+            (appkit-scroll-observer-handles observer)
+            (cons handle (appkit-scroll-observer-handles observer))))))
 
 (defun appkit-scroll-observer-check (observer &optional window)
   "Check OBSERVER against WINDOW or every window displaying its buffer.
 
 Applications should call this after committing a page to their projection so a
 short result can immediately request another eligible page.  Edge callbacks
-must synchronously close their loading gate before starting asynchronous work."
+must synchronously close their loading gate before starting asynchronous work.
+An unredisplayed window defers one lifecycle-owned check instead of exposing a
+stale visible edge."
   (unless (appkit-scroll-observer-p observer)
     (error "Appkit scroll observer is invalid: %S" observer))
-  (if window
-      (appkit-scroll-observer--check-window observer window)
-    (dolist (candidate
-             (get-buffer-window-list
-              (appkit-scroll-observer-buffer observer) nil t))
-      (appkit-scroll-observer--check-window observer candidate))))
+  (let ((unmeasured-p nil))
+    (if window
+        (setq unmeasured-p
+              (eq 'unmeasured
+                  (appkit-scroll-observer--check-window observer window)))
+      (dolist (candidate
+               (get-buffer-window-list
+                (appkit-scroll-observer-buffer observer) nil t))
+        (when (eq 'unmeasured
+                  (appkit-scroll-observer--check-window observer candidate))
+          (setq unmeasured-p t))))
+    (when unmeasured-p
+      (appkit-scroll-observer--defer-check observer))))
 
 (defun appkit-scroll-observer-cancel (observer)
   "Cancel OBSERVER and remove its registered hooks exactly once."
@@ -151,7 +200,8 @@ must synchronously close their loading gate before starting asynchronous work."
     (setf (appkit-scroll-observer-active-p observer) nil)
     (dolist (handle (appkit-scroll-observer-handles observer))
       (appkit-cancel-handle handle))
-    (setf (appkit-scroll-observer-handles observer) nil)
+    (setf (appkit-scroll-observer-handles observer) nil
+          (appkit-scroll-observer-deferred-check-handle observer) nil)
     t))
 
 (cl-defun appkit-scroll-observer-install
@@ -187,11 +237,10 @@ application request gates.  At least one callback must be non-nil."
            :active-p t))
          (post-command-function
           (lambda ()
-            (appkit-scroll-observer--check-window
-             observer (selected-window))))
+            (appkit-scroll-observer-check observer (selected-window))))
          (window-scroll-function
           (lambda (window _display-start)
-            (appkit-scroll-observer--check-window observer window))))
+            (appkit-scroll-observer-check observer window))))
     (setf (appkit-scroll-observer-post-command-function observer)
           post-command-function
           (appkit-scroll-observer-window-scroll-function observer)

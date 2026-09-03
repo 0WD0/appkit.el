@@ -364,6 +364,20 @@
       (should (equal '(space :align-to 2)
                      (get-text-property insert-pos 'display))))))
 
+(ert-deftest appkit-view-display-space-keeps-source-width-constant ()
+  (let ((columns (appkit-view-display-space :columns 8))
+        (pixels (appkit-view-display-space :pixels 24))
+        (aligned (appkit-view-display-space :align-to 40)))
+    (should (= 1 (length columns)))
+    (should (equal '(space :width 8)
+                   (get-text-property 0 'display columns)))
+    (should (equal '(space :width (24))
+                   (get-text-property 0 'display pixels)))
+    (should (equal '(space :align-to 40)
+                   (get-text-property 0 'display aligned)))
+    (should-error
+     (appkit-view-display-space :columns 1 :pixels 2))))
+
 (ert-deftest appkit-view-window-fill-column-uses-remapped-width-and-margins ()
   (let* ((win (selected-window))
          (buffer (window-buffer win))
@@ -400,6 +414,18 @@
                 (should (eq second-window (appkit-view-display-window))))))
         (kill-buffer buffer)
         (kill-buffer other-buffer)))))
+
+(ert-deftest appkit-view-display-window-supports-frame-capability-filter ()
+  (save-window-excursion
+    (with-temp-buffer
+      (set-window-buffer (selected-window) (current-buffer))
+      (should
+       (eq (selected-window)
+           (appkit-view-display-window nil (lambda (_frame) t))))
+      (should-not
+       (appkit-view-display-window nil (lambda (_frame) nil)))
+      (should-not
+       (appkit-view-display-frame nil (lambda (_frame) nil))))))
 
 (ert-deftest appkit-view-responsive-geometry-coalesces-display-changes ()
   (save-window-excursion

@@ -19,6 +19,7 @@
 (require 'cl-lib)
 (require 'subr-x)
 (require 'appkit-media-image)
+(require 'appkit-view)
 
 (defun appkit-chat-avatar--spacing-pixels (spacing font-height)
   "Return SPACING converted to pixels relative to FONT-HEIGHT."
@@ -31,23 +32,8 @@
    (t 0)))
 
 (defun appkit-chat-avatar--render-window ()
-  "Return the preferred live window displaying the current buffer.
-
-Prefer the selected window, then a window on the selected frame, before
-considering visible and other frames."
-  (let* ((buffer (current-buffer))
-         (selected (selected-window)))
-    (cond
-     ((and (window-live-p selected)
-           (eq (window-buffer selected) buffer))
-      selected)
-     ((cl-find-if #'window-live-p
-                  (get-buffer-window-list buffer nil (selected-frame))))
-     ((cl-find-if #'window-live-p
-                  (get-buffer-window-list buffer nil 'visible)))
-     (t
-      (cl-find-if #'window-live-p
-                  (get-buffer-window-list buffer nil t))))))
+  "Return the canonical live window displaying the current buffer."
+  (appkit-view-display-window (current-buffer)))
 
 (defun appkit-chat-avatar-line-pixel-height ()
   "Return one default-face text line's pixel height in the current buffer."
@@ -94,9 +80,9 @@ considering visible and other frames."
                1)))))
 
 (defun appkit-chat-avatar--render-frame ()
-  "Return the frame used to render avatars for the current buffer."
-  (or (and-let* ((window (appkit-chat-avatar--render-window)))
-        (window-frame window))
+  "Return an image-capable frame used to render avatars."
+  (or (appkit-media-image-capable-frame (current-buffer))
+      (appkit-view-display-frame (current-buffer))
       (selected-frame)))
 
 (defun appkit-chat-avatar--graphical-display-p ()

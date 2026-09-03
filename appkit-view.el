@@ -309,26 +309,43 @@ column widths.  FACE supplies the font metrics used for measurement."
             (appkit-view--elide-string-to-pixels text pixel-limit face)))
       (appkit-view-elide-string text limit face))))
 
-(defun appkit-view-display-window (&optional buffer)
+(defun appkit-view-display-window (&optional buffer frame-predicate)
   "Return the canonical live window displaying BUFFER.
 
 The selected window wins when it displays BUFFER.  Otherwise return the
 widest live window displaying BUFFER across all frames.  Width-sensitive
 generated content is shared by every window showing one buffer, so callers
-must use this one presentation window consistently."
+must use this one presentation window consistently.  Optional FRAME-PREDICATE
+restricts candidates by their owning frame."
+  (unless (or (null frame-predicate) (functionp frame-predicate))
+    (error "Appkit display frame predicate is not callable: %S"
+           frame-predicate))
   (let* ((buffer (or buffer (current-buffer)))
-         (selected (selected-window)))
-    (if (and (window-live-p selected)
-             (eq (window-buffer selected) buffer))
+         (selected (selected-window))
+         (eligible-p
+          (lambda (window)
+            (and (window-live-p window)
+                 (eq (window-buffer window) buffer)
+                 (or (null frame-predicate)
+                     (funcall frame-predicate (window-frame window)))))))
+    (if (funcall eligible-p selected)
         selected
       (let ((best nil)
             (best-width -1))
         (dolist (window (get-buffer-window-list buffer nil t) best)
-          (when (window-live-p window)
+          (when (funcall eligible-p window)
             (let ((width (window-width window 'remap)))
               (when (> width best-width)
                 (setq best window
                       best-width width)))))))))
+
+(defun appkit-view-display-frame (&optional buffer frame-predicate)
+  "Return the frame of BUFFER's canonical display window.
+
+Optional FRAME-PREDICATE restricts eligible display frames."
+  (when-let* ((window
+               (appkit-view-display-window buffer frame-predicate)))
+    (window-frame window)))
 
 (defun appkit-view-default-line-pixel-height ()
   "Return the default-face line height for the current buffer in pixels.
@@ -405,16 +422,53 @@ point after the query."
                      (string-width (buffer-substring scan point-now))))))))
     (or align-column (current-column))))
 
+(cl-defun appkit-view-display-space
+    (&key (columns nil columns-p)
+          (pixels nil pixels-p)
+          (align-to nil align-to-p))
+  "Return one display-only space sized by COLUMNS, PIXELS, or ALIGN-TO.
+
+Exactly one sizing argument must be supplied.  The returned source string has
+one character regardless of its visible width."
+  (unless (= 1 (length (delq nil (list columns-p pixels-p align-to-p))))
+    (error "Appkit display space requires exactly one sizing argument"))
+  (when (and columns-p
+             (not (and (numberp columns) (>= columns 0))))
+    (error "Appkit display-space columns are invalid: %S" columns))
+  (when (and pixels-p
+             (not (and (numberp pixels) (>= pixels 0))))
+    (error "Appkit display-space pixels are invalid: %S" pixels))
+  (propertize
+   " "
+   'display
+   (cond
+    (columns-p `(space :width ,columns))
+    (pixels-p `(space :width (,pixels)))
+    (t `(space :align-to ,align-to)))
+   'rear-nonsticky '(display)))
+
+(cl-defun appkit-view-insert-display-space
+    (&key (columns nil columns-p)
+          (pixels nil pixels-p)
+          (align-to nil align-to-p))
+  "Insert one display-only space sized by COLUMNS, PIXELS, or ALIGN-TO."
+  (unless (= 1 (length (delq nil (list columns-p pixels-p align-to-p))))
+    (error "Appkit display space requires exactly one sizing argument"))
+  (insert
+   (cond
+    (columns-p (appkit-view-display-space :columns columns))
+    (pixels-p (appkit-view-display-space :pixels pixels))
+    (t (appkit-view-display-space :align-to align-to)))))
+
 (defun appkit-view-move-to-column (column)
   "Insert one absolute align-to spacer for COLUMN."
   (let* ((target (max 0 (or column 0)))
          (win (appkit-view-display-window))
-         (frame (and (window-live-p win) (window-frame win))))
-    (let ((align-to (if (and (frame-live-p frame)
-                             (display-graphic-p frame))
-                        (list (appkit-view--chars-xwidth target win))
-                      target)))
-      (insert (propertize " " 'display `(space :align-to ,align-to))))))
+         (frame (and (window-live-p win) (window-frame win)))
+         (align-to (if (display-graphic-p frame)
+                       (list (* target (frame-char-width frame)))
+                     target)))
+    (appkit-view-insert-display-space :align-to align-to)))
 
 (defun appkit-view-window-fill-column (&optional window margin-columns)
   "Return telega-style usable columns for WINDOW.

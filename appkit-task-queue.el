@@ -51,18 +51,12 @@
     (signal 'wrong-type-argument (list 'appkit-task-queue-p queue)))
   queue)
 
-(defun appkit-task-queue--owner-live-p (owner)
-  "Return non-nil when OWNER is a live app or view."
-  (cond
-   ((appkit-app-p owner) (appkit-app-live-p owner))
-   ((appkit-view-p owner) (appkit-view-live-p owner))
-   (t nil)))
 
 (defun appkit-task-queue-live-p (queue)
   "Return non-nil when QUEUE and its lifecycle owner are live."
   (and (appkit-task-queue-p queue)
        (appkit-task-queue--alive-p queue)
-       (appkit-task-queue--owner-live-p
+       (appkit-owner-live-p
         (appkit-task-queue--owner queue))))
 
 (defun appkit-task-queue-owner (queue)
@@ -350,7 +344,7 @@ waiting."
 LIMIT must be a positive integer.  Stopping OWNER closes the returned queue,
 cancels its active tasks, drops its waiting tasks, and makes stale completion
 callbacks inert."
-  (unless (appkit-task-queue--owner-live-p owner)
+  (unless (appkit-owner-live-p owner)
     (error "Cannot create a task queue for a dead appkit owner"))
   (unless (and (integerp limit) (> limit 0))
     (error "Appkit task queue limit must be positive: %S" limit))

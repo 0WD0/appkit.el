@@ -660,6 +660,63 @@
     (appkit-app-emit app 'change 2)
     (should (equal seen '(1)))))
 
+(ert-deftest appkit-view-operation-fences-synchronous-settlement ()
+  (appkit-test-with-view
+    (let* ((view (appkit-current-view))
+           (cancelled nil)
+           (operation
+            (appkit-view-operation-begin
+             view 'page :cancel-function
+             (lambda (object) (push object cancelled)))))
+      (should (appkit-view-operation-current-p operation))
+      (should (appkit-view-operation-finish operation))
+      (should-not (appkit-view-operation-current-p operation))
+      (should (eq 'transport
+                  (appkit-view-operation-bind operation 'transport)))
+      (should-not cancelled)
+      (should-not (appkit-view-operation-finish operation)))))
+
+(ert-deftest appkit-view-operation-replacement-cancels-only-old-owner ()
+  (appkit-test-with-view
+    (let* ((view (appkit-current-view))
+           cancelled
+           (old
+            (appkit-view-operation-begin
+             view 'page :cancel-function
+             (lambda (object) (push object cancelled)))))
+      (appkit-view-operation-bind old 'old-transport)
+      (let ((new
+             (appkit-view-operation-begin
+              view 'page :cancel-function
+              (lambda (object) (push object cancelled)))))
+        (should (equal cancelled '(old-transport)))
+        (should-not (appkit-view-operation-current-p old))
+        (should (appkit-view-operation-current-p new))
+        (should-not (appkit-view-operation-finish old))
+        (should (appkit-view-operation-finish new))))))
+
+(ert-deftest appkit-view-operation-late-bind-honors-view-cancellation ()
+  (let* ((app (appkit-start-app 'appkit-test :id 'operation))
+         (view
+          (appkit-open-view
+           :app app :id 'operation :mode 'special-mode
+           :buffer-name " *appkit-operation*"))
+         (buffer (appkit-view-buffer view))
+         cancelled
+         (operation
+          (appkit-view-operation-begin
+           view 'load :cancel-function
+           (lambda (object) (push object cancelled)))))
+    (unwind-protect
+        (progn
+          (appkit-kill-view view)
+          (should-not (appkit-view-operation-current-p operation))
+          (appkit-view-operation-bind operation 'late-transport)
+          (should (equal cancelled '(late-transport))))
+      (appkit-stop-app app)
+      (when (buffer-live-p buffer)
+        (kill-buffer buffer)))))
+
 (provide 'appkit-core-test)
 
 ;;; appkit-core-test.el ends here
