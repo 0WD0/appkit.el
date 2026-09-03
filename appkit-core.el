@@ -76,7 +76,6 @@
   "One keyed asynchronous operation owned by an Appkit view."
   view
   key
-  token
   object
   cancel-function
   handle
@@ -301,7 +300,6 @@ non-nil, receives the transport object later supplied to
           (appkit-view-operation--create
            :view view
            :key key
-           :token (make-symbol "appkit-view-operation-")
            :cancel-function cancel-function
            :state 'active))
          (handle

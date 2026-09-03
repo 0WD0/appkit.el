@@ -237,10 +237,10 @@ application request gates.  At least one callback must be non-nil."
            :active-p t))
          (post-command-function
           (lambda ()
-            (appkit-scroll-observer-check observer (selected-window))))
+            (appkit-scroll-observer--defer-check observer)))
          (window-scroll-function
-          (lambda (window _display-start)
-            (appkit-scroll-observer-check observer window))))
+          (lambda (_window _display-start)
+            (appkit-scroll-observer--defer-check observer))))
     (setf (appkit-scroll-observer-post-command-function observer)
           post-command-function
           (appkit-scroll-observer-window-scroll-function observer)
