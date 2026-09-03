@@ -443,20 +443,19 @@
          (appkit-view-enable-responsive-geometry view)
          (should (= 28 (appkit-view-responsive-width 2)))
          (dolist (hook
-                  (list window-size-change-functions
-                        window-selection-change-functions
+                  (list window-state-change-functions
                         display-line-numbers-mode-hook
                         text-scale-mode-hook))
            (should (memq #'appkit-view-refresh-responsive-geometry hook)))
          (should
           (= 1
              (cl-count #'appkit-view-refresh-responsive-geometry
-                       window-size-change-functions)))
+                       window-state-change-functions)))
          (setq width 40)
          (run-hook-with-args
-          'window-size-change-functions (selected-window))
+          'window-state-change-functions (selected-window))
          (run-hook-with-args
-          'window-size-change-functions (selected-window))
+          'window-state-change-functions (selected-window))
          (run-hooks 'text-scale-mode-hook))
        (should
         (equal (nreverse requests)
@@ -487,7 +486,7 @@
                   (lambda (&rest _arguments)
                     (ert-fail "Detached view requested geometry sync"))))
          (run-hook-with-args
-          'window-size-change-functions (selected-window))
+          'window-state-change-functions (selected-window))
          (run-hooks 'text-scale-mode-hook))
        (should (= measurements 0))))))
 
