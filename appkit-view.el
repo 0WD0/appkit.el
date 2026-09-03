@@ -525,12 +525,12 @@ buffer uses its current `fill-column' until a live window can be measured."
            (- appkit-view--responsive-width
               (max 0 (or margin-columns 0)))))))
 
-(cl-defun appkit-view-refresh-responsive-geometry (&key force)
+(defun appkit-view-refresh-responsive-geometry (&rest events)
   "Remeasure the current view's responsive geometry.
 
 Request one position-preserving `geometry' synchronization when the canonical
-window or its usable width changed.  FORCE requests synchronization even when
-both values compare equal, for display metric changes such as text scaling.
+window or its usable width changed.  A call without EVENTS also synchronizes
+unchanged geometry, which covers display hooks and explicit refreshes.
 Return the measured width in columns, or nil when no live view is displayed."
   (when appkit-view--responsive-geometry-p
     (when-let* ((view (appkit-current-view))
@@ -542,17 +542,9 @@ Return the measured width in columns, or nil when no live view is displayed."
                  (not (equal width appkit-view--responsive-width)))))
         (setq-local appkit-view--responsive-window window
                     appkit-view--responsive-width width)
-        (when (or force changed)
+        (when (or (null events) changed)
           (appkit-request-sync view :part 'geometry :position t))
         width))))
-
-(defun appkit-view--on-window-geometry-change (_window)
-  "Refresh responsive geometry after one displaying window changes."
-  (appkit-view-refresh-responsive-geometry))
-
-(defun appkit-view--on-display-geometry-change ()
-  "Refresh responsive geometry after buffer display metrics change."
-  (appkit-view-refresh-responsive-geometry :force t))
 
 (defun appkit-view-enable-responsive-geometry (view)
   "Make VIEW observe its canonical display geometry.
@@ -565,22 +557,23 @@ presentation update."
   (with-current-buffer (appkit-view-buffer view)
     (unless (eq view (appkit-current-view))
       (error "Cannot enable geometry for a detached Appkit view"))
-    (setq-local appkit-view--responsive-geometry-p t)
-    (unless appkit-view--responsive-width
-      (when-let* ((window (appkit-view-display-window)))
-        (setq-local appkit-view--responsive-window window))
-      (setq-local appkit-view--responsive-width
-                  (or (appkit-view-window-fill-column
-                       appkit-view--responsive-window)
-                      fill-column)))
-    (add-hook 'window-size-change-functions
-              #'appkit-view--on-window-geometry-change nil t)
-    (add-hook 'window-selection-change-functions
-              #'appkit-view--on-window-geometry-change nil t)
-    (add-hook 'display-line-numbers-mode-hook
-              #'appkit-view--on-display-geometry-change nil t)
-    (add-hook 'text-scale-mode-hook
-              #'appkit-view--on-display-geometry-change nil t))
+    (unless appkit-view--responsive-geometry-p
+      (setq-local appkit-view--responsive-geometry-p t)
+      (unless appkit-view--responsive-width
+        (when-let* ((window (appkit-view-display-window)))
+          (setq-local appkit-view--responsive-window window))
+        (setq-local appkit-view--responsive-width
+                    (or (appkit-view-window-fill-column
+                         appkit-view--responsive-window)
+                        fill-column)))
+      (add-hook 'window-size-change-functions
+                #'appkit-view-refresh-responsive-geometry nil t)
+      (add-hook 'window-selection-change-functions
+                #'appkit-view-refresh-responsive-geometry nil t)
+      (add-hook 'display-line-numbers-mode-hook
+                #'appkit-view-refresh-responsive-geometry nil t)
+      (add-hook 'text-scale-mode-hook
+                #'appkit-view-refresh-responsive-geometry nil t)))
   view)
 
 (defun appkit-view-one-line-column-widths

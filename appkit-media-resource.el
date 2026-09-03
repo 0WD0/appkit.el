@@ -790,11 +790,6 @@ CACHE-UPDATE-FUNCTION, CACHE-POLICY, LIVE, and REQUEST-HEADERS are forwarded to
   "Return cache file base in DIRECTORY for logical KEY."
   (expand-file-name (md5 (format "%s" key)) directory))
 
-(defun appkit-media--open-cache-existing-file (directory key)
-  "Return an existing cached file in DIRECTORY for KEY, or nil."
-  (appkit-media-image-cache-existing-file
-   (appkit-media--open-cache-file-base directory key)))
-
 (defun appkit-media-image-cache-existing-file (cache-base)
   "Return an existing image cache file rooted at CACHE-BASE, or nil."
   (seq-find
@@ -836,9 +831,10 @@ CLIENT-LABEL in synchronous setup errors."
     (user-error "%s: image cache directory is required" client-label))
   (let* ((url (alist-get 'url resource))
          (key (appkit-media--resource-image-cache-key resource cache-key))
-         (existing (and key
-                        (appkit-media--open-cache-existing-file
-                         cache-directory key))))
+         (existing
+          (and key
+               (appkit-media-image-cache-existing-file
+                (appkit-media--open-cache-file-base cache-directory key)))))
     (if existing
         (funcall callback existing)
       (unless (appkit-media-url-present-p url)

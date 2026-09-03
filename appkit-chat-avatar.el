@@ -31,10 +31,6 @@
        (appkit-chat-avatar--spacing-pixels (cdr spacing) font-height)))
    (t 0)))
 
-(defun appkit-chat-avatar--render-window ()
-  "Return the canonical live window displaying the current buffer."
-  (appkit-view-display-window (current-buffer)))
-
 (defun appkit-chat-avatar-line-pixel-height ()
   "Return one default-face text line's pixel height in the current buffer."
   ;; `window-font-height' can move point to WINDOW's window-point when WINDOW
@@ -42,7 +38,7 @@
   ;; EWOC printer while another window has focus, so leaking that movement
   ;; makes the remainder of the row print at an unrelated buffer position.
   (save-excursion
-    (let ((window (appkit-chat-avatar--render-window)))
+    (let ((window (appkit-view-display-window)))
       (max
        1
        (or (and window
@@ -67,7 +63,7 @@
   ;; Keep geometry queries observational: window font APIs may select the
   ;; queried window's point as an implementation detail.
   (save-excursion
-    (let ((window (appkit-chat-avatar--render-window)))
+    (let ((window (appkit-view-display-window)))
       (max 1
            (or (and window
                     (ignore-errors (window-font-width window 'default)))
@@ -84,10 +80,6 @@
   (or (appkit-media-image-capable-frame (current-buffer))
       (appkit-view-display-frame (current-buffer))
       (selected-frame)))
-
-(defun appkit-chat-avatar--graphical-display-p ()
-  "Return non-nil when the current avatar target uses a graphical frame."
-  (display-graphic-p (appkit-chat-avatar--render-frame)))
 
 (defun appkit-chat-avatar-two-line-pixel-size ()
   "Return the pixel size of an avatar occupying exactly two text lines."
@@ -222,7 +214,7 @@ non-nil.  SLICE-HEIGHT overrides the inferred one-line pixel height."
 
 On graphical displays it occupies exactly PIXEL-WIDTH pixels."
   (let ((text (make-string (max 1 columns) ?\u00a0)))
-    (if (and (appkit-chat-avatar--graphical-display-p)
+    (if (and (display-graphic-p (appkit-chat-avatar--render-frame))
              (numberp pixel-width)
              (> pixel-width 0))
         (propertize text
