@@ -27,6 +27,41 @@
    :context context
    :dependencies dependencies))
 
+(ert-deftest appkit-projection-diff-derives-common-invalidation-work ()
+  (let ((invalidations (appkit-invalidations-create))
+        (avatar '(:avatar "u"))
+        (theme '(:theme dark)))
+    (setf (appkit-invalidations-parts invalidations) '(frame geometry metadata)
+          (appkit-invalidations-entry-keys invalidations) '(b)
+          (appkit-invalidations-resource-keys invalidations)
+          (list 'all avatar))
+    (let ((diff
+           (appkit-projection-diff-derive
+            invalidations
+            :existing-keys '(a b c)
+            :reconcile-parts '(metadata)
+            :force-keys '(d)
+            :changed-dependencies (list theme 'all))))
+      (should (appkit-projection-diff-reconcile-p diff))
+      (should (equal (sort (copy-sequence
+                            (appkit-projection-diff-force-keys diff))
+                           (lambda (left right)
+                             (string< (symbol-name left)
+                                      (symbol-name right))))
+                     '(a b c d)))
+      (should (= 2 (length
+                    (appkit-projection-diff-changed-dependencies diff))))
+      (should (member avatar
+                      (appkit-projection-diff-changed-dependencies diff)))
+      (should (member theme
+                      (appkit-projection-diff-changed-dependencies diff))))
+    (let ((frame-only (appkit-invalidations-create)))
+      (setf (appkit-invalidations-parts frame-only) '(frame))
+      (let ((diff (appkit-projection-diff-derive frame-only)))
+        (should-not (appkit-projection-diff-reconcile-p diff))
+        (should-not (appkit-projection-diff-force-keys diff))
+        (should-not (appkit-projection-diff-changed-dependencies diff))))))
+
 (ert-deftest appkit-projection-projects-context-and-dependencies ()
   (let ((rows
          (appkit-projection-project

@@ -53,6 +53,60 @@
   footer
   no-separator-p)
 
+(cl-defstruct (appkit-projection-diff
+               (:constructor appkit-projection-diff--create))
+  "Projection work derived from one invalidation snapshot."
+  reconcile-p
+  force-keys
+  changed-dependencies)
+
+(cl-defun appkit-projection-diff-derive
+    (invalidations &key existing-keys reconcile-parts reconcile
+                   force-keys changed-dependencies)
+  "Derive projection work from INVALIDATIONS.
+
+EXISTING-KEYS names rows available for whole-projection redraw.  RECONCILE-PARTS
+names client-defined parts that affect row structure.  RECONCILE, FORCE-KEYS,
+and CHANGED-DEPENDENCIES add domain-specific work to the common derivation.
+
+Structure, entry, geometry, and resource invalidations require reconciliation.
+Entry keys are forced directly.  Geometry or the resource key `all' forces
+every existing row.  `all' is never returned as a changed dependency."
+  (unless (appkit-invalidations-p invalidations)
+    (signal 'wrong-type-argument
+            (list 'appkit-invalidations-p invalidations)))
+  (let* ((parts (appkit-invalidations-parts invalidations))
+         (entries (appkit-invalidations-entry-keys invalidations))
+         (resources
+          (delete-dups
+           (append (copy-sequence
+                    (appkit-invalidations-resource-keys invalidations))
+                   (copy-sequence changed-dependencies))))
+         (geometry-p (memq 'geometry parts))
+         (all-resources-p (memq 'all resources))
+         (changed
+          (delete-dups (delq 'all (copy-sequence resources))))
+         (forced
+          (delete-dups
+           (delq nil
+                 (append (copy-sequence entries)
+                         (copy-sequence force-keys)
+                         (and (or geometry-p all-resources-p)
+                              (copy-sequence existing-keys))))))
+         (reconcile-p
+          (or reconcile
+              (appkit-invalidations-structure-p invalidations)
+              entries
+              resources
+              geometry-p
+              forced
+              (cl-some (lambda (part) (memq part parts))
+                       reconcile-parts))))
+    (appkit-projection-diff--create
+     :reconcile-p (and reconcile-p t)
+     :force-keys forced
+     :changed-dependencies changed)))
+
 (defun appkit-projection--print-row (projection row)
   "Render projected ROW through PROJECTION's client printer."
   (let ((printer (appkit-projection--engine-printer projection)))
