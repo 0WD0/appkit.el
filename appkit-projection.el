@@ -463,6 +463,35 @@ only when DIFF requires reconciliation."
    :position position
    :reconcile-p (appkit-projection-diff-reconcile-p diff)))
 
+(cl-defmacro appkit-projection-sync-invalidations
+    (view invalidations rows
+          &key reconcile-parts reconcile force-keys changed-dependencies
+          header footer (position ''preserve))
+  "Synchronize VIEW from INVALIDATIONS and lazily projected ROWS.
+
+ROWS is evaluated only when the derived diff requires reconciliation.
+RECONCILE-PARTS, RECONCILE, FORCE-KEYS, and CHANGED-DEPENDENCIES extend common
+diff derivation.  HEADER, FOOTER, and POSITION control the projection frame."
+  (declare (indent 3) (debug t))
+  (let ((view-value (make-symbol "view"))
+        (diff (make-symbol "diff")))
+    `(let* ((,view-value ,view)
+            (,diff
+             (appkit-projection-diff-derive
+              ,invalidations
+              :existing-keys (appkit-projection-keys ,view-value)
+              :reconcile-parts ,reconcile-parts
+              :reconcile ,reconcile
+              :force-keys ,force-keys
+              :changed-dependencies ,changed-dependencies)))
+       (appkit-projection-sync-diff
+        ,view-value
+        (and (appkit-projection-diff-reconcile-p ,diff) ,rows)
+        ,diff
+        :header ,header
+        :footer ,footer
+        :position ,position))))
+
 (provide 'appkit-projection)
 
 ;;; appkit-projection.el ends here

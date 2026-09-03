@@ -149,9 +149,9 @@
       (should (string-prefix-p "Ready\n" (buffer-string)))
       (let ((invalidations (appkit-invalidations-create)))
         (setf (appkit-invalidations-parts invalidations) '(frame))
-        (appkit-projection-sync-diff
-         view nil (appkit-projection-diff-derive invalidations)
-         :header "Settled\n"))
+        (appkit-projection-sync-invalidations
+            view invalidations (error "Frame-only sync evaluated rows")
+          :header "Settled\n"))
       (should (= 1 (gethash 'a prints)))
       (should (equal '(a) (appkit-projection-keys view)))
       (should (string-prefix-p "Settled\n" (buffer-string))))))
