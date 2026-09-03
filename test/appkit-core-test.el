@@ -734,6 +734,21 @@
       (should-not (appkit-owner-live-p operation))
       (should-not (appkit-view-operation-handles operation)))))
 
+(ert-deftest appkit-view-operation-retires-opaque-child-before-finish ()
+  (appkit-test-with-view
+    (let* ((view (appkit-current-view))
+           (operation
+            (appkit-view-operation-begin
+             view 'page :cancel-function
+             (lambda (_object)
+               (ert-fail "Normal settlement cancelled its opaque child")))))
+      (appkit-view-operation-bind operation 'transport)
+      (should (appkit-view-operation-retire operation 'transport))
+      (should-not (appkit-view-operation-handles operation))
+      (should (appkit-view-operation-finish operation))
+      (should-not
+       (appkit-view-operation-retire operation 'transport)))))
+
 (ert-deftest appkit-view-operation-fences-and-cancels-replaced-view-state ()
   (appkit-test-with-view
     (let* ((view (appkit-current-view))
