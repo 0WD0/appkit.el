@@ -376,6 +376,21 @@ already finished normally, leave OBJECT alone."
      (appkit-view-operation--cancel-object operation object)))
   object)
 
+(defun appkit-view-operation-retire (operation object)
+  "Retire OPERATION's child matching OBJECT without cancelling it.
+
+Return non-nil when a live child was found.  This is the normal-completion
+boundary for opaque transports that cannot retire their Appkit handle
+themselves before publishing a callback."
+  (unless (appkit-view-operation-p operation)
+    (signal 'wrong-type-argument
+            (list 'appkit-view-operation-p operation)))
+  (when-let* ((handle
+               (cl-find
+                object (appkit-view-operation-handles operation)
+                :key #'appkit-handle-object :test #'eq)))
+    (appkit-retire-handle handle)))
+
 (defun appkit-view-operation-finish (operation)
   "Finish current OPERATION and return non-nil when it owned settlement.
 
